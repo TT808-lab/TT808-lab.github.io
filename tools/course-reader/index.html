@@ -72,11 +72,6 @@
   .sent{ padding:1px 2px; border-radius:3px; }
   .sent.playing{ background:var(--highlight-soft); box-shadow: inset 0 -2px 0 var(--highlight); }
   .caption-empty{ color:var(--ink-soft); font-size:14px; font-family:"Noto Sans SC",sans-serif; }
-  .nav-row{ display:flex; gap:10px; margin-top:12px; }
-  .nav-btn{ flex:1; padding:12px; border-radius:8px; border:1px solid var(--rule);
-    background:var(--paper-card); color:var(--deck); font-size:14px; font-weight:600;
-    cursor:pointer; font-family:"Noto Sans SC",sans-serif; }
-  .nav-btn:disabled{ opacity:.35; cursor:not-allowed; }
 
   .deck{ position:fixed; left:0; right:0; bottom:0; background:var(--deck-2);
     border-top:1px solid #17252C; box-shadow:0 -6px 18px rgba(0,0,0,0.18); padding:10px 14px 12px; z-index:20; }
@@ -86,11 +81,15 @@
   .led.pause{ background:var(--led-pause); box-shadow:0 0 6px var(--led-pause); }
   .playbtn{ width:48px; height:48px; border-radius:50%; background:#F2EFE6; color:var(--deck-2);
     border:none; font-size:18px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+  .navbtn-deck{ width:34px; height:34px; border-radius:50%; background:transparent; color:#F2EFE6;
+    border:1px solid #46585f; font-size:14px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+  .navbtn-deck:disabled{ opacity:.35; cursor:not-allowed; }
   .rate-block{ display:flex; align-items:center; gap:6px; }
   .rate-block input[type=range]{ width:56px; accent-color:var(--highlight); }
   .lcd{ font-family:"SFMono-Regular",Menlo,monospace; background:var(--lcd-bg); color:var(--lcd-fg);
     font-size:11px; padding:3px 6px; border-radius:4px; min-width:38px; text-align:center; }
   .deck-row2{ display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .deck-row2 .counter{ margin-left:auto; }
   select#voiceSelect{ flex:1; min-width:0; background:#1F323B; color:#DCE7E9; border:1px solid #3A4E56;
     border-radius:6px; font-size:11px; padding:6px; font-family:"Noto Sans SC",sans-serif; }
   .auto-chip{ font-size:11px; color:#DCE7E9; display:flex; align-items:center; gap:5px; white-space:nowrap;
@@ -157,10 +156,6 @@
       <div class="page-num" id="pageNum">1 / 1</div>
     </div>
     <div class="caption" id="caption"></div>
-    <div class="nav-row">
-      <button class="nav-btn" id="prevBtn" data-zh="◀ 上一页" data-en="◀ Prev">◀ 上一页</button>
-      <button class="nav-btn" id="nextBtn" data-zh="下一页 ▶" data-en="Next ▶">下一页 ▶</button>
-    </div>
   </div>
 
 </div>
@@ -168,16 +163,18 @@
 <div class="deck" id="deck" style="display:none;">
   <div class="deck-inner">
     <span class="led" id="led"></span>
+    <button class="navbtn-deck" id="prevBtn">⏮</button>
     <button class="playbtn" id="playBtn">▶</button>
+    <button class="navbtn-deck" id="nextBtn">⏭</button>
     <div class="rate-block">
       <input type="range" id="rateRange" min="0.5" max="1.5" step="0.25" value="1">
       <span class="lcd" id="rateLcd">1.00x</span>
     </div>
-    <label class="auto-chip"><input type="checkbox" id="autoAdvance" checked/> <span data-zh="自动翻页" data-en="Auto-advance">自动翻页</span></label>
   </div>
   <div class="deck-row2">
+    <label class="auto-chip"><input type="checkbox" id="autoAdvance" checked/> <span data-zh="自动翻页" data-en="Auto-advance">自动翻页</span></label>
     <select id="voiceSelect"><option value="">…</option></select>
-    <span class="lcd" id="counterLcd">1/1</span>
+    <span class="lcd counter" id="counterLcd">1/1</span>
   </div>
 </div>
 
