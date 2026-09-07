@@ -19,8 +19,13 @@
   h1{ font-size:20px; margin:0; font-family:"Noto Sans SC","PingFang SC",sans-serif; }
   .sub{ color:var(--ink-soft); font-size:12px; margin:2px 0 0; font-family:"Noto Sans SC",sans-serif; }
   header.top{ border-bottom:1px solid var(--rule); padding-bottom:12px; margin-bottom:16px;
-    display:flex; align-items:center; justify-content:space-between; }
+    display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .backlink{ font-size:13px; color:var(--deck); cursor:pointer; font-family:"Noto Sans SC",sans-serif; font-weight:600; }
+  .top-right{ display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .lang-toggle{ display:flex; border:1px solid var(--rule); border-radius:8px; overflow:hidden; flex-shrink:0; }
+  .lang-btn{ border:none; background:var(--paper-card); color:var(--ink-soft); font-size:11px; padding:6px 10px;
+    cursor:pointer; font-family:"Noto Sans SC",sans-serif; font-weight:600; }
+  .lang-btn.active{ background:var(--deck); color:#F2EFE6; }
 
   .panel{ background:var(--paper-card); border:1px solid var(--rule); border-radius:10px;
     padding:16px; margin-bottom:14px; font-family:"Noto Sans SC",sans-serif; }
@@ -99,10 +104,16 @@
 
   <header class="top">
     <div>
-      <h1>课程阅读器</h1>
-      <p class="sub">内容只存在这台设备本地,不上传到任何网站</p>
+      <h1 data-zh="课程阅读器" data-en="Course Reader">课程阅读器</h1>
+      <p class="sub" data-zh="内容只存在这台设备本地,不上传到任何网站" data-en="Everything stays on this device — nothing is uploaded">内容只存在这台设备本地,不上传到任何网站</p>
     </div>
-    <span class="backlink" id="backLink" style="display:none;">‹ 返回书架</span>
+    <div class="top-right">
+      <div class="lang-toggle">
+        <button type="button" id="langZh" class="lang-btn active">中文</button>
+        <button type="button" id="langEn" class="lang-btn">EN</button>
+      </div>
+      <span class="backlink" id="backLink" style="display:none;" data-zh="‹ 返回书架" data-en="‹ Back">‹ 返回书架</span>
+    </div>
   </header>
 
   <div id="warnBanner" class="banner-warn" style="display:none;"></div>
@@ -110,30 +121,30 @@
   <!-- 书架视图 -->
   <div id="libraryView">
     <div id="bookList"></div>
-    <div class="empty-state" id="emptyState" style="display:none;">还没有存过任何书 —— 点下面添加一本 PDF 开始吧。</div>
+    <div class="empty-state" id="emptyState" style="display:none;" data-zh="还没有存过任何书 —— 点下面添加一本 PDF 开始吧。" data-en="No books yet — add a PDF below to get started.">还没有存过任何书 —— 点下面添加一本 PDF 开始吧。</div>
     <div class="panel">
-      <h2>添加 PDF</h2>
-      <label class="hint" for="bookTitle" style="display:block;margin-bottom:4px;">书名(新书填新名字;给已有的书追加页数,就填一样的名字)</label>
-      <input type="text" id="bookTitle" placeholder="例如 Ways of the World" />
+      <h2 data-zh="添加 PDF" data-en="Add a PDF">添加 PDF</h2>
+      <label class="hint" for="bookTitle" style="display:block;margin-bottom:4px;" data-zh="书名(新书填新名字;给已有的书追加页数,就填一样的名字)" data-en="Book title (new name for a new book; reuse the same name to add more pages)">书名(新书填新名字;给已有的书追加页数,就填一样的名字)</label>
+      <input type="text" id="bookTitle" placeholder="例如 Ways of the World" data-zh-placeholder="例如 Ways of the World" data-en-placeholder="e.g. Ways of the World" />
       <div style="height:10px;"></div>
       <input type="file" id="pdfFile" accept="application/pdf" />
       <div style="display:flex; gap:10px; margin-top:10px;">
         <div style="flex:1;">
-          <label class="hint" for="startPage" style="display:block;margin-bottom:4px;">起始页</label>
+          <label class="hint" for="startPage" style="display:block;margin-bottom:4px;" data-zh="起始页" data-en="Start page">起始页</label>
           <input type="text" id="startPage" placeholder="1" />
         </div>
         <div style="flex:1;">
-          <label class="hint" for="endPage" style="display:block;margin-bottom:4px;">结束页</label>
-          <input type="text" id="endPage" placeholder="留空=到最后一页" />
+          <label class="hint" for="endPage" style="display:block;margin-bottom:4px;" data-zh="结束页" data-en="End page">结束页</label>
+          <input type="text" id="endPage" placeholder="留空=到最后一页" data-zh-placeholder="留空=到最后一页" data-en-placeholder="Blank = to last page" />
         </div>
       </div>
-      <div class="hint">建议每次先转 20-40 页看看速度,没问题再加大范围。厚书按章节分批加,书架里会自动累加页数。</div>
+      <div class="hint" data-zh="建议每次先转 20-40 页看看速度,没问题再加大范围。厚书按章节分批加,书架里会自动累加页数。" data-en="Tip: try 20-40 pages first to check speed, then do more. For thick books, add a chapter at a time — pages accumulate automatically.">建议每次先转 20-40 页看看速度,没问题再加大范围。厚书按章节分批加,书架里会自动累加页数。</div>
       <div class="btn-row">
-        <button class="btn btn-primary" id="startBtn" disabled>转换并保存到本机</button>
+        <button class="btn btn-primary" id="startBtn" disabled data-zh="转换并保存到本机" data-en="Convert & Save">转换并保存到本机</button>
       </div>
       <div class="progress-wrap" id="progressWrap" style="display:none;">
         <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
-        <div class="status-line" id="statusLine">准备中…</div>
+        <div class="status-line" id="statusLine" data-zh="准备中…" data-en="Preparing…">准备中…</div>
         <div class="log" id="log"></div>
       </div>
     </div>
@@ -147,8 +158,8 @@
     </div>
     <div class="caption" id="caption"></div>
     <div class="nav-row">
-      <button class="nav-btn" id="prevBtn">◀ 上一页</button>
-      <button class="nav-btn" id="nextBtn">下一页 ▶</button>
+      <button class="nav-btn" id="prevBtn" data-zh="◀ 上一页" data-en="◀ Prev">◀ 上一页</button>
+      <button class="nav-btn" id="nextBtn" data-zh="下一页 ▶" data-en="Next ▶">下一页 ▶</button>
     </div>
   </div>
 
@@ -162,7 +173,7 @@
       <input type="range" id="rateRange" min="0.5" max="1.5" step="0.25" value="1">
       <span class="lcd" id="rateLcd">1.00x</span>
     </div>
-    <label class="auto-chip"><input type="checkbox" id="autoAdvance" checked/> 自动翻页</label>
+    <label class="auto-chip"><input type="checkbox" id="autoAdvance" checked/> <span data-zh="自动翻页" data-en="Auto-advance">自动翻页</span></label>
   </div>
   <div class="deck-row2">
     <select id="voiceSelect"><option value="">…</option></select>
@@ -176,6 +187,13 @@
   const JPEG_QUALITY = 0.72;
   const DB_NAME = 'studyReaderDB';
   const DB_VERSION = 1;
+  const LANG_KEY = 'reader_lang';
+
+  function readSavedLang(){ try{ return localStorage.getItem(LANG_KEY); }catch(e){ return null; } }
+  function saveLang(v){ try{ localStorage.setItem(LANG_KEY, v); }catch(e){} }
+
+  let uiLang = readSavedLang() || 'zh';
+  function t(zh, en){ return uiLang==='zh' ? zh : en; }
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
@@ -250,7 +268,7 @@
   const warnBanner = document.getElementById('warnBanner');
 
   function slugify(s){
-    return s.toLowerCase().trim().replace(/[^a-z0-9\u4e00-\u9fa5]+/g,'-').replace(/(^-|-$)/g,'') || 'book';
+    return s.toLowerCase().trim().replace(/[^a-z0-9一-龥]+/g,'-').replace(/(^-|-$)/g,'') || 'book';
   }
 
   async function refreshLibrary(){
@@ -264,10 +282,10 @@
       card.className = 'book-card';
       card.innerHTML = `
         <div class="name">${escapeHtml(book.title)}</div>
-        <div class="meta">已保存 ${pages.length} 页</div>
+        <div class="meta">${t('已保存','Saved')} ${pages.length} ${t('页','pages')}</div>
         <div class="row">
-          <button class="btn btn-primary" data-open="${book.id}">打开阅读</button>
-          <button class="btn btn-danger" data-del="${book.id}">删除</button>
+          <button class="btn btn-primary" data-open="${book.id}">${t('打开阅读','Open')}</button>
+          <button class="btn btn-danger" data-del="${book.id}">${t('删除','Delete')}</button>
         </div>`;
       bookListEl.appendChild(card);
     }
@@ -276,13 +294,34 @@
     });
     bookListEl.querySelectorAll('[data-del]').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
-        if(!confirm('删除这本书在本机保存的全部内容?不可恢复。')) return;
+        if(!confirm(t('删除这本书在本机保存的全部内容?不可恢复。','Delete all locally saved content for this book? This cannot be undone.'))) return;
         await deleteBookAndPages(btn.dataset.del);
         refreshLibrary();
       });
     });
   }
   function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // ---------- language toggle ----------
+  function applyLang(){
+    document.querySelectorAll('[data-zh]').forEach(el=>{
+      el.textContent = uiLang==='zh' ? el.dataset.zh : el.dataset.en;
+    });
+    document.querySelectorAll('[data-zh-placeholder]').forEach(el=>{
+      el.placeholder = uiLang==='zh' ? el.dataset.zhPlaceholder : el.dataset.enPlaceholder;
+    });
+    document.getElementById('langZh').classList.toggle('active', uiLang==='zh');
+    document.getElementById('langEn').classList.toggle('active', uiLang==='en');
+    document.title = t('课程阅读器','Course Reader');
+    if(db && libraryView.style.display !== 'none') refreshLibrary();
+    if(readerView.style.display !== 'none'){ renderPage(); }
+  }
+  document.getElementById('langZh').addEventListener('click', ()=>{
+    uiLang='zh'; saveLang(uiLang); applyLang();
+  });
+  document.getElementById('langEn').addEventListener('click', ()=>{
+    uiLang='en'; saveLang(uiLang); applyLang();
+  });
 
   // ---------- convert & save ----------
   const fileInput = document.getElementById('pdfFile');
@@ -328,11 +367,12 @@
       const from = Math.max(1, isNaN(startVal)?1:startVal);
       const to = Math.min(totalPages, isNaN(endVal)?totalPages:endVal);
       const rangeCount = to-from+1;
-      log(`全书共 ${totalPages} 页,本次处理第 ${from}-${to} 页(共 ${rangeCount} 页)…`);
+      log(t(`全书共 ${totalPages} 页,本次处理第 ${from}-${to} 页(共 ${rangeCount} 页)…`,
+            `Book has ${totalPages} pages total; processing ${from}-${to} (${rangeCount} pages)…`));
       let done = 0;
       for(let i=from;i<=to;i++){
         done++;
-        setProgress(Math.round((done-1)/rangeCount*100), `第 ${i} 页(${done}/${rangeCount})`);
+        setProgress(Math.round((done-1)/rangeCount*100), t(`第 ${i} 页(${done}/${rangeCount})`, `Page ${i} (${done}/${rangeCount})`));
         const page = await pdfDoc.getPage(i);
         const textContent = await page.getTextContent();
         const text = textContent.items.map(it=>it.str).join(' ').replace(/\s+/g,' ').trim();
@@ -347,13 +387,13 @@
         const blob = await new Promise(res=>canvas.toBlob(res,'image/jpeg',JPEG_QUALITY));
         await putPage({ key: bookId+'#'+i, bookId, pageNum:i, image:blob, text });
       }
-      setProgress(100, `完成 —— 第 ${from}-${to} 页已保存到本机`);
-      log('保存完成。');
+      setProgress(100, t(`完成 —— 第 ${from}-${to} 页已保存到本机`, `Done — pages ${from}-${to} saved`));
+      log(t('保存完成。','Saved.'));
       fileInput.value=''; selectedFile=null; startBtn.disabled=true;
       refreshLibrary();
     }catch(err){
       warnBanner.style.display='block';
-      warnBanner.textContent = '处理出错:' + (err.message||err) + '。可以重新选择文件再试一次。';
+      warnBanner.textContent = t('处理出错:','Error: ') + (err.message||err) + t('。可以重新选择文件再试一次。',' Please re-select the file and try again.');
       startBtn.disabled=false;
     }
   });
@@ -406,7 +446,7 @@
   function renderCaption(){
     const p = currentPage();
     const cap = document.getElementById('caption');
-    if(!p || !p.sentences.length){ cap.innerHTML = '<span class="caption-empty">(本页无文字)</span>'; return; }
+    if(!p || !p.sentences.length){ cap.innerHTML = `<span class="caption-empty">${t('(本页无文字)','(No text on this page)')}</span>`; return; }
     cap.innerHTML = p.sentences.map((s,i)=>`<span class="sent" data-s="${i}">${escapeHtml(s)}</span>`).join(' ');
   }
   function highlightSentence(i){
@@ -431,7 +471,7 @@
     if(!readerState.voiceURI && voices.length) readerState.voiceURI = voices[0].voiceURI;
     const sel = document.getElementById('voiceSelect');
     sel.innerHTML='';
-    if(voices.length===0){ sel.innerHTML='<option value="">未检测到英文语音</option>'; return; }
+    if(voices.length===0){ sel.innerHTML=`<option value="">${t('未检测到英文语音','No English voice found')}</option>`; return; }
     voices.forEach(v=>{
       const opt=document.createElement('option'); opt.value=v.voiceURI; opt.textContent=v.name; sel.appendChild(opt);
     });
@@ -506,12 +546,14 @@
 
   if(!supportsTTS){
     warnBanner.style.display='block';
-    warnBanner.textContent = '当前浏览器不支持朗读功能,页面仍可正常查看。';
+    warnBanner.textContent = t('当前浏览器不支持朗读功能,页面仍可正常查看。','This browser does not support read-aloud; the page still works for viewing.');
   }
+
+  applyLang();
 
   openDb().then(_db=>{ db=_db; refreshLibrary(); }).catch(err=>{
     warnBanner.style.display='block';
-    warnBanner.textContent = '本机存储初始化失败:' + (err.message||err);
+    warnBanner.textContent = t('本机存储初始化失败:','Storage init failed: ') + (err.message||err);
   });
 })();
 </script>
