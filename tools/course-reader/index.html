@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>课程阅读器</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --paper: #EFEBDD; --paper-card: #F7F4EA; --ink: #26241F; --ink-soft: #6E6659;
+    --rule: #D9D2BF; --highlight: #E8B84B; --highlight-soft: rgba(232,184,75,0.28);
+    --deck: #2F4858; --deck-2: #253944; --led-on: #5FAE7A; --led-off: #5A6F78;
+    --led-pause: #D9A441; --error: #B5482E; --lcd-bg: #1B2A31; --lcd-fg: #8FE3B8;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Georgia","Times New Roman",serif; min-height:100vh; padding-bottom:8px; }
+  .wrap{ max-width:560px; margin:0 auto; padding:18px 16px 90px; }
+  h1{ font-size:20px; margin:0; font-family:"Noto Sans SC","PingFang SC",sans-serif; }
+  .sub{ color:var(--ink-soft); font-size:12px; margin:2px 0 0; font-family:"Noto Sans SC",sans-serif; }
+  header.top{ border-bottom:1px solid var(--rule); padding-bottom:12px; margin-bottom:16px;
+    display:flex; align-items:center; justify-content:space-between; }
+  .backlink{ font-size:13px; color:var(--deck); cursor:pointer; font-family:"Noto Sans SC",sans-serif; font-weight:600; }
+
+  .panel{ background:var(--paper-card); border:1px solid var(--rule); border-radius:10px;
+    padding:16px; margin-bottom:14px; font-family:"Noto Sans SC",sans-serif; }
+  .panel h2{ font-size:13px; margin:0 0 10px; color:var(--ink-soft); font-weight:600;
+    text-transform:uppercase; letter-spacing:.04em; }
+  input[type=text]{ width:100%; border:1px solid var(--rule); border-radius:8px; padding:9px 10px;
+    font-size:14px; background:#FFFDF7; color:var(--ink); font-family:inherit; }
+  .btn{ border:none; border-radius:7px; padding:10px 16px; font-size:13.5px; font-weight:600;
+    cursor:pointer; font-family:"Noto Sans SC",sans-serif; }
+  .btn-primary{ background:var(--deck); color:#F2EFE6; }
+  .btn-primary:disabled{ background:#9BA6AB; cursor:not-allowed; }
+  .btn-ghost{ background:transparent; color:var(--deck); border:1px solid var(--rule); }
+  .btn-danger{ background:transparent; color:var(--error); border:1px solid var(--error); }
+  .btn-row{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .hint{ font-size:11.5px; color:var(--ink-soft); margin-top:6px; line-height:1.5; }
+
+  .book-card{ background:var(--paper-card); border:1px solid var(--rule); border-left:3px solid var(--highlight);
+    border-radius:10px; padding:12px 14px; margin-bottom:10px; font-family:"Noto Sans SC",sans-serif; }
+  .book-card .name{ font-weight:700; font-size:15px; }
+  .book-card .meta{ font-size:11.5px; color:var(--ink-soft); margin:3px 0 8px; }
+  .book-card .row{ display:flex; gap:8px; }
+
+  .progress-wrap{ margin-top:10px; }
+  .bar-track{ height:8px; background:#E3DDC9; border-radius:4px; overflow:hidden; }
+  .bar-fill{ height:100%; background:var(--highlight); width:0%; transition:width .2s ease; }
+  .status-line{ font-size:12px; color:var(--ink-soft); margin-top:6px;
+    font-family:"SFMono-Regular",Menlo,monospace; }
+  .log{ margin-top:8px; max-height:120px; overflow-y:auto; font-size:11px; color:var(--ink-soft);
+    font-family:"SFMono-Regular",Menlo,monospace; line-height:1.6; }
+
+  .empty-state{ text-align:center; color:var(--ink-soft); font-size:13px; padding:36px 20px;
+    border:1px dashed var(--rule); border-radius:10px; font-family:"Noto Sans SC",sans-serif; }
+
+  /* reader view */
+  .page-frame{ background:var(--paper-card); border:1px solid var(--rule); border-radius:12px;
+    padding:10px; margin-bottom:12px; }
+  .page-img-wrap{ width:100%; border-radius:8px; overflow:hidden; background:#fff;
+    display:flex; align-items:center; justify-content:center; min-height:200px; }
+  .page-img-wrap img{ width:100%; display:block; }
+  .page-num{ text-align:center; font-family:"SFMono-Regular",Menlo,monospace; font-size:11px;
+    color:var(--ink-soft); margin-top:8px; }
+  .caption{ background:var(--paper-card); border:1px solid var(--rule); border-radius:10px;
+    padding:16px 18px; font-size:16.5px; line-height:1.75; text-align:left; }
+  .sent{ padding:1px 2px; border-radius:3px; }
+  .sent.playing{ background:var(--highlight-soft); box-shadow: inset 0 -2px 0 var(--highlight); }
+  .caption-empty{ color:var(--ink-soft); font-size:14px; font-family:"Noto Sans SC",sans-serif; }
+  .nav-row{ display:flex; gap:10px; margin-top:12px; }
+  .nav-btn{ flex:1; padding:12px; border-radius:8px; border:1px solid var(--rule);
+    background:var(--paper-card); color:var(--deck); font-size:14px; font-weight:600;
+    cursor:pointer; font-family:"Noto Sans SC",sans-serif; }
+  .nav-btn:disabled{ opacity:.35; cursor:not-allowed; }
+
+  .deck{ position:fixed; left:0; right:0; bottom:0; background:var(--deck-2);
+    border-top:1px solid #17252C; box-shadow:0 -6px 18px rgba(0,0,0,0.18); padding:10px 14px 12px; z-index:20; }
+  .deck-inner{ max-width:560px; margin:0 auto; display:flex; align-items:center; gap:10px; }
+  .led{ width:9px; height:9px; border-radius:50%; background:var(--led-off); flex-shrink:0; }
+  .led.on{ background:var(--led-on); box-shadow:0 0 6px var(--led-on); }
+  .led.pause{ background:var(--led-pause); box-shadow:0 0 6px var(--led-pause); }
+  .playbtn{ width:48px; height:48px; border-radius:50%; background:#F2EFE6; color:var(--deck-2);
+    border:none; font-size:18px; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+  .rate-block{ display:flex; align-items:center; gap:6px; }
+  .rate-block input[type=range]{ width:56px; accent-color:var(--highlight); }
+  .lcd{ font-family:"SFMono-Regular",Menlo,monospace; background:var(--lcd-bg); color:var(--lcd-fg);
+    font-size:11px; padding:3px 6px; border-radius:4px; min-width:38px; text-align:center; }
+  .deck-row2{ display:flex; align-items:center; gap:8px; margin-top:8px; }
+  select#voiceSelect{ flex:1; min-width:0; background:#1F323B; color:#DCE7E9; border:1px solid #3A4E56;
+    border-radius:6px; font-size:11px; padding:6px; font-family:"Noto Sans SC",sans-serif; }
+  .auto-chip{ font-size:11px; color:#DCE7E9; display:flex; align-items:center; gap:5px; white-space:nowrap;
+    font-family:"Noto Sans SC",sans-serif; }
+  .banner-warn{ background:#FBEFD8; border:1px solid #E3C382; color:#7A5A16; font-size:12.5px;
+    border-radius:8px; padding:8px 10px; margin-bottom:14px; font-family:"Noto Sans SC",sans-serif; }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+
+  <header class="top">
+    <div>
+      <h1>课程阅读器</h1>
+      <p class="sub">内容只存在这台设备本地,不上传到任何网站</p>
+    </div>
+    <span class="backlink" id="backLink" style="display:none;">‹ 返回书架</span>
+  </header>
+
+  <div id="warnBanner" class="banner-warn" style="display:none;"></div>
+
+  <!-- 书架视图 -->
+  <div id="libraryView">
+    <div id="bookList"></div>
+    <div class="empty-state" id="emptyState" style="display:none;">还没有存过任何书 —— 点下面添加一本 PDF 开始吧。</div>
+    <div class="panel">
+      <h2>添加 PDF</h2>
+      <label class="hint" for="bookTitle" style="display:block;margin-bottom:4px;">书名(新书填新名字;给已有的书追加页数,就填一样的名字)</label>
+      <input type="text" id="bookTitle" placeholder="例如 Ways of the World" />
+      <div style="height:10px;"></div>
+      <input type="file" id="pdfFile" accept="application/pdf" />
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <div style="flex:1;">
+          <label class="hint" for="startPage" style="display:block;margin-bottom:4px;">起始页</label>
+          <input type="text" id="startPage" placeholder="1" />
+        </div>
+        <div style="flex:1;">
+          <label class="hint" for="endPage" style="display:block;margin-bottom:4px;">结束页</label>
+          <input type="text" id="endPage" placeholder="留空=到最后一页" />
+        </div>
+      </div>
+      <div class="hint">建议每次先转 20-40 页看看速度,没问题再加大范围。厚书按章节分批加,书架里会自动累加页数。</div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="startBtn" disabled>转换并保存到本机</button>
+      </div>
+      <div class="progress-wrap" id="progressWrap" style="display:none;">
+        <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+        <div class="status-line" id="statusLine">准备中…</div>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 阅读视图 -->
+  <div id="readerView" style="display:none;">
+    <div class="page-frame">
+      <div class="page-img-wrap"><img id="pageImg" alt="page"/></div>
+      <div class="page-num" id="pageNum">1 / 1</div>
+    </div>
+    <div class="caption" id="caption"></div>
+    <div class="nav-row">
+      <button class="nav-btn" id="prevBtn">◀ 上一页</button>
+      <button class="nav-btn" id="nextBtn">下一页 ▶</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="deck" id="deck" style="display:none;">
+  <div class="deck-inner">
+    <span class="led" id="led"></span>
+    <button class="playbtn" id="playBtn">▶</button>
+    <div class="rate-block">
+      <input type="range" id="rateRange" min="0.5" max="1.5" step="0.25" value="1">
+      <span class="lcd" id="rateLcd">1.00x</span>
+    </div>
+    <label class="auto-chip"><input type="checkbox" id="autoAdvance" checked/> 自动翻页</label>
+  </div>
+  <div class="deck-row2">
+    <select id="voiceSelect"><option value="">…</option></select>
+    <span class="lcd" id="counterLcd">1/1</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  const TARGET_WIDTH = 900;
+  const JPEG_QUALITY = 0.72;
+  const DB_NAME = 'studyReaderDB';
+  const DB_VERSION = 1;
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  let db = null;
+
+  function openDb(){
+    return new Promise((resolve,reject)=>{
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = (e)=>{
+        const _db = e.target.result;
+        if(!_db.objectStoreNames.contains('books')){
+          _db.createObjectStore('books', { keyPath:'id' });
+        }
+        if(!_db.objectStoreNames.contains('pages')){
+          const store = _db.createObjectStore('pages', { keyPath:'key' });
+          store.createIndex('bookId','bookId',{ unique:false });
+        }
+      };
+      req.onsuccess = (e)=>resolve(e.target.result);
+      req.onerror = (e)=>reject(e.target.error);
+    });
+  }
+  function tx(storeNames, mode){ return db.transaction(storeNames, mode); }
+  function reqToPromise(req){
+    return new Promise((resolve,reject)=>{
+      req.onsuccess = ()=>resolve(req.result);
+      req.onerror = ()=>reject(req.error);
+    });
+  }
+
+  async function putBook(book){
+    const t = tx(['books'],'readwrite');
+    t.objectStore('books').put(book);
+    return new Promise((res)=>{ t.oncomplete = ()=>res(); });
+  }
+  async function getAllBooks(){
+    const t = tx(['books'],'readonly');
+    const req = t.objectStore('books').getAll();
+    return reqToPromise(req);
+  }
+  async function deleteBookAndPages(bookId){
+    const t = tx(['books','pages'],'readwrite');
+    t.objectStore('books').delete(bookId);
+    const idx = t.objectStore('pages').index('bookId');
+    const cursorReq = idx.openCursor(IDBKeyRange.only(bookId));
+    cursorReq.onsuccess = (e)=>{
+      const cursor = e.target.result;
+      if(cursor){ cursor.delete(); cursor.continue(); }
+    };
+    return new Promise((res)=>{ t.oncomplete = ()=>res(); });
+  }
+  async function putPage(page){
+    const t = tx(['pages'],'readwrite');
+    t.objectStore('pages').put(page);
+    return new Promise((res)=>{ t.oncomplete = ()=>res(); });
+  }
+  async function getBookPages(bookId){
+    const t = tx(['pages'],'readonly');
+    const idx = t.objectStore('pages').index('bookId');
+    const req = idx.getAll(IDBKeyRange.only(bookId));
+    const pages = await reqToPromise(req);
+    pages.sort((a,b)=>a.pageNum-b.pageNum);
+    return pages;
+  }
+
+  const libraryView = document.getElementById('libraryView');
+  const readerView = document.getElementById('readerView');
+  const backLink = document.getElementById('backLink');
+  const bookListEl = document.getElementById('bookList');
+  const emptyState = document.getElementById('emptyState');
+  const deckEl = document.getElementById('deck');
+  const warnBanner = document.getElementById('warnBanner');
+
+  function slugify(s){
+    return s.toLowerCase().trim().replace(/[^a-z0-9\u4e00-\u9fa5]+/g,'-').replace(/(^-|-$)/g,'') || 'book';
+  }
+
+  async function refreshLibrary(){
+    const books = await getAllBooks();
+    bookListEl.innerHTML = '';
+    emptyState.style.display = books.length ? 'none' : 'block';
+    books.sort((a,b)=> (b.updatedAt||0) - (a.updatedAt||0));
+    for(const book of books){
+      const pages = await getBookPages(book.id);
+      const card = document.createElement('div');
+      card.className = 'book-card';
+      card.innerHTML = `
+        <div class="name">${escapeHtml(book.title)}</div>
+        <div class="meta">已保存 ${pages.length} 页</div>
+        <div class="row">
+          <button class="btn btn-primary" data-open="${book.id}">打开阅读</button>
+          <button class="btn btn-danger" data-del="${book.id}">删除</button>
+        </div>`;
+      bookListEl.appendChild(card);
+    }
+    bookListEl.querySelectorAll('[data-open]').forEach(btn=>{
+      btn.addEventListener('click', ()=>openBook(btn.dataset.open));
+    });
+    bookListEl.querySelectorAll('[data-del]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if(!confirm('删除这本书在本机保存的全部内容?不可恢复。')) return;
+        await deleteBookAndPages(btn.dataset.del);
+        refreshLibrary();
+      });
+    });
+  }
+  function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // ---------- convert & save ----------
+  const fileInput = document.getElementById('pdfFile');
+  const titleInput = document.getElementById('bookTitle');
+  const startBtn = document.getElementById('startBtn');
+  const progressWrap = document.getElementById('progressWrap');
+  const barFill = document.getElementById('barFill');
+  const statusLine = document.getElementById('statusLine');
+  const logEl = document.getElementById('log');
+  let selectedFile = null;
+
+  fileInput.addEventListener('change', ()=>{
+    selectedFile = fileInput.files[0] || null;
+    startBtn.disabled = !selectedFile;
+    if(selectedFile && !titleInput.value){
+      titleInput.value = selectedFile.name.replace(/\.pdf$/i,'');
+    }
+  });
+
+  function log(msg){
+    const line = document.createElement('div');
+    line.textContent = msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setProgress(pct, status){ barFill.style.width = pct+'%'; statusLine.textContent = status; }
+
+  startBtn.addEventListener('click', async ()=>{
+    if(!selectedFile) return;
+    const title = titleInput.value.trim() || 'Untitled';
+    const bookId = slugify(title);
+    const startVal = parseInt(document.getElementById('startPage').value,10);
+    const endVal = parseInt(document.getElementById('endPage').value,10);
+    warnBanner.style.display='none';
+    progressWrap.style.display='block';
+    logEl.innerHTML=''; barFill.style.width='0%';
+    startBtn.disabled = true;
+    try{
+      await putBook({ id:bookId, title, updatedAt: Date.now() });
+      const arrayBuffer = await selectedFile.arrayBuffer();
+      const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const totalPages = pdfDoc.numPages;
+      const from = Math.max(1, isNaN(startVal)?1:startVal);
+      const to = Math.min(totalPages, isNaN(endVal)?totalPages:endVal);
+      const rangeCount = to-from+1;
+      log(`全书共 ${totalPages} 页,本次处理第 ${from}-${to} 页(共 ${rangeCount} 页)…`);
+      let done = 0;
+      for(let i=from;i<=to;i++){
+        done++;
+        setProgress(Math.round((done-1)/rangeCount*100), `第 ${i} 页(${done}/${rangeCount})`);
+        const page = await pdfDoc.getPage(i);
+        const textContent = await page.getTextContent();
+        const text = textContent.items.map(it=>it.str).join(' ').replace(/\s+/g,' ').trim();
+        const baseViewport = page.getViewport({ scale:1 });
+        const scale = TARGET_WIDTH / baseViewport.width;
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const blob = await new Promise(res=>canvas.toBlob(res,'image/jpeg',JPEG_QUALITY));
+        await putPage({ key: bookId+'#'+i, bookId, pageNum:i, image:blob, text });
+      }
+      setProgress(100, `完成 —— 第 ${from}-${to} 页已保存到本机`);
+      log('保存完成。');
+      fileInput.value=''; selectedFile=null; startBtn.disabled=true;
+      refreshLibrary();
+    }catch(err){
+      warnBanner.style.display='block';
+      warnBanner.textContent = '处理出错:' + (err.message||err) + '。可以重新选择文件再试一次。';
+      startBtn.disabled=false;
+    }
+  });
+
+  // ---------- reader ----------
+  const readerState = { bookId:null, pages:[], pageIdx:0, currentS:-1, playing:false, paused:false, rate:1.0, voiceURI:null };
+  let voices=[];
+  let playToken=0;
+  const supportsTTS = 'speechSynthesis' in window;
+
+  function splitSentences(text){
+    if(!text) return [];
+    const parts = text.match(/[^.!?\n]+[.!?]?/g) || [text];
+    return parts.map(s=>s.trim()).filter(Boolean);
+  }
+
+  async function openBook(bookId){
+    const pages = await getBookPages(bookId);
+    if(!pages.length) return;
+    readerState.bookId = bookId;
+    readerState.pages = pages.map(p=>({ ...p, sentences: splitSentences(p.text), url: URL.createObjectURL(p.image) }));
+    readerState.pageIdx = 0;
+    libraryView.style.display='none';
+    readerView.style.display='block';
+    backLink.style.display='inline';
+    deckEl.style.display='block';
+    renderPage();
+  }
+  backLink.addEventListener('click', ()=>{
+    stopPlayback();
+    readerView.style.display='none';
+    deckEl.style.display='none';
+    backLink.style.display='none';
+    libraryView.style.display='block';
+    refreshLibrary();
+  });
+
+  function currentPage(){ return readerState.pages[readerState.pageIdx]; }
+
+  function renderPage(){
+    const p = currentPage();
+    if(!p) return;
+    document.getElementById('pageImg').src = p.url;
+    document.getElementById('pageNum').textContent = (readerState.pageIdx+1)+' / '+readerState.pages.length;
+    document.getElementById('counterLcd').textContent = (readerState.pageIdx+1)+'/'+readerState.pages.length;
+    renderCaption();
+    document.getElementById('prevBtn').disabled = readerState.pageIdx<=0;
+    document.getElementById('nextBtn').disabled = readerState.pageIdx>=readerState.pages.length-1;
+  }
+  function renderCaption(){
+    const p = currentPage();
+    const cap = document.getElementById('caption');
+    if(!p || !p.sentences.length){ cap.innerHTML = '<span class="caption-empty">(本页无文字)</span>'; return; }
+    cap.innerHTML = p.sentences.map((s,i)=>`<span class="sent" data-s="${i}">${escapeHtml(s)}</span>`).join(' ');
+  }
+  function highlightSentence(i){
+    document.querySelectorAll('.sent.playing').forEach(el=>el.classList.remove('playing'));
+    const el = document.querySelector(`.sent[data-s="${i}"]`);
+    if(el) el.classList.add('playing');
+  }
+  function goToPage(idx, autoplay){
+    if(idx<0 || idx>=readerState.pages.length) return;
+    stopPlayback();
+    readerState.pageIdx = idx;
+    readerState.currentS = -1;
+    renderPage();
+    if(autoplay) startPlay(0);
+  }
+  document.getElementById('prevBtn').addEventListener('click', ()=>goToPage(readerState.pageIdx-1,false));
+  document.getElementById('nextBtn').addEventListener('click', ()=>goToPage(readerState.pageIdx+1,false));
+
+  function loadVoices(){
+    if(!supportsTTS) return;
+    voices = speechSynthesis.getVoices().filter(v=>v.lang.toLowerCase().startsWith('en'));
+    if(!readerState.voiceURI && voices.length) readerState.voiceURI = voices[0].voiceURI;
+    const sel = document.getElementById('voiceSelect');
+    sel.innerHTML='';
+    if(voices.length===0){ sel.innerHTML='<option value="">未检测到英文语音</option>'; return; }
+    voices.forEach(v=>{
+      const opt=document.createElement('option'); opt.value=v.voiceURI; opt.textContent=v.name; sel.appendChild(opt);
+    });
+    sel.value = readerState.voiceURI || voices[0].voiceURI;
+    readerState.voiceURI = sel.value;
+  }
+  if(supportsTTS){ speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
+  document.getElementById('voiceSelect').addEventListener('change', e=>{
+    readerState.voiceURI = e.target.value; restartWithNewSettings();
+  });
+
+  function speakCurrent(token){
+    if(token!==playToken) return;
+    const p = currentPage();
+    if(!p){ stopPlayback(); return; }
+    if(readerState.currentS >= p.sentences.length){
+      if(document.getElementById('autoAdvance').checked && readerState.pageIdx < readerState.pages.length-1){
+        goToPage(readerState.pageIdx+1, true);
+      } else { stopPlayback(); }
+      return;
+    }
+    highlightSentence(readerState.currentS);
+    const utter = new SpeechSynthesisUtterance(p.sentences[readerState.currentS]);
+    utter.lang='en-US'; utter.rate = readerState.rate;
+    const v = voices.find(v=>v.voiceURI===readerState.voiceURI);
+    if(v) utter.voice=v;
+    utter.onend = ()=>{ if(token!==playToken) return; readerState.currentS++; speakCurrent(token); };
+    utter.onerror = ()=>{ if(token!==playToken) return; readerState.currentS++; speakCurrent(token); };
+    speechSynthesis.speak(utter);
+  }
+  function startPlay(sIdx){
+    if(!supportsTTS) return;
+    speechSynthesis.cancel(); playToken++;
+    const token = playToken;
+    readerState.currentS = sIdx; readerState.playing=true; readerState.paused=false;
+    updateDeck(); speakCurrent(token);
+  }
+  function restartWithNewSettings(){
+    if(!readerState.playing || readerState.paused) return;
+    speechSynthesis.cancel(); playToken++; speakCurrent(playToken);
+  }
+  function togglePlayPause(){
+    if(!supportsTTS) return;
+    if(!readerState.playing){ startPlay(readerState.currentS>=0?readerState.currentS:0); }
+    else if(!readerState.paused){ speechSynthesis.pause(); readerState.paused=true; updateDeck(); }
+    else { speechSynthesis.resume(); readerState.paused=false; updateDeck(); }
+  }
+  function stopPlayback(){
+    playToken++;
+    if(supportsTTS) speechSynthesis.cancel();
+    readerState.playing=false; readerState.paused=false;
+    document.querySelectorAll('.sent.playing').forEach(el=>el.classList.remove('playing'));
+    updateDeck();
+  }
+  function updateDeck(){
+    const led=document.getElementById('led'); const btn=document.getElementById('playBtn');
+    led.classList.remove('on','pause');
+    if(readerState.playing && !readerState.paused){ led.classList.add('on'); btn.textContent='❚❚'; }
+    else if(readerState.playing && readerState.paused){ led.classList.add('pause'); btn.textContent='▶'; }
+    else { btn.textContent='▶'; }
+  }
+  document.getElementById('playBtn').addEventListener('click', togglePlayPause);
+  document.getElementById('rateRange').addEventListener('input', e=>{
+    readerState.rate = parseFloat(e.target.value);
+    document.getElementById('rateLcd').textContent = readerState.rate.toFixed(2)+'x';
+    restartWithNewSettings();
+  });
+  document.getElementById('caption').addEventListener('click', e=>{
+    const span = e.target.closest('.sent'); if(!span) return;
+    startPlay(parseInt(span.dataset.s,10));
+  });
+
+  if(!supportsTTS){
+    warnBanner.style.display='block';
+    warnBanner.textContent = '当前浏览器不支持朗读功能,页面仍可正常查看。';
+  }
+
+  openDb().then(_db=>{ db=_db; refreshLibrary(); }).catch(err=>{
+    warnBanner.style.display='block';
+    warnBanner.textContent = '本机存储初始化失败:' + (err.message||err);
+  });
+})();
+</script>
+</body>
+</html>
