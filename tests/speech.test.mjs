@@ -1,0 +1,65 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { BrowserSpeechProvider, SpeechController, speechItems } from '../tools/course-reader/core/speech.mjs';
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const en = { voiceURI: 'en', lang: 'en-US', localService: true };
+const zh = { voiceURI: 'zh', lang: 'zh-CN', localService: true };
+class Provider {
+  constructor() { this.calls = []; }
+  voices() { return [en, zh, { voiceURI: 'cloud', lang: 'zh-CN', localService: false }]; }
+  speak(text, options) { options.onStart(); return new Promise((resolve, reject) => this.calls.push({ text, options, resolve, reject })); }
+  stop() {} pause() {} resume() {}
+}
+const queue = language => ['One.', 'Two.'].map(text => ({ text, language, unitId: 'u', sentenceIndex: 0 }));
+
+test('language matched voices, independent preferences and stale completion fencing', async () => {
+  const provider = new Provider(); const c = new SpeechController(provider);
+  c.play(queue('en')); assert.equal(provider.calls[0].options.voice, en);
+  c.play(queue('zh')); assert.equal(provider.calls[1].options.voice, zh);
+  provider.calls[0].resolve(); await tick(); assert.equal(provider.calls.length, 2);
+  c.changeSettings({ language: 'en', voiceURI: 'en' });
+  c.changeSettings({ language: 'zh', voiceURI: 'zh' });
+  assert.deepEqual(c.preferences, { en: 'en', zh: 'zh' });
+  assert.equal(c.voices('zh').length, 1);
+  c.stop();
+});
+test('speech error preserves current sentence; retry never silently skips', async () => {
+  const provider = new Provider(); const c = new SpeechController(provider);
+  c.play(queue('en')); provider.calls[0].reject(Error('failed')); await tick();
+  assert.equal(c.state, 'error'); assert.equal(c.index, 0); assert.equal(provider.calls.length, 1);
+  c.retry(); assert.equal(provider.calls[1].text, 'One.');
+  provider.calls[1].resolve(); await tick(); assert.equal(provider.calls[2].text, 'Two.');
+  provider.calls[2].resolve(); await tick(); assert.equal(c.state, 'stopped');
+});
+test('changing settings while paused stays paused and resumes from current sentence', async () => {
+  const provider = new Provider(); const c = new SpeechController(provider);
+  c.play(queue('en')); c.pause(); c.changeSettings({ rate: 1.25 });
+  assert.equal(c.state, 'paused'); assert.equal(provider.calls.length, 1);
+  provider.calls[0].resolve(); await tick(); assert.equal(provider.calls.length, 1);
+  c.resume(); assert.equal(provider.calls[1].text, 'One.'); assert.equal(provider.calls[1].options.rate, 1.25);
+  c.stop();
+});
+test('missing voice and incomplete translation fail explicitly', async () => {
+  const provider = new Provider(); provider.voices = () => [en];
+  const c = new SpeechController(provider); c.play(queue('zh')); await tick();
+  assert.equal(c.state, 'error'); assert.equal(provider.calls.length, 0);
+  assert.throws(() => speechItems([{ id: 'u', text: 'original' }], 'zh', true), /not ready/);
+  const items = speechItems([{ id: 'u', text: 'Hello.\n你好！' }], 'en');
+  assert.ok(items.every(i => i.unitId === 'u'));
+});
+test('pause/resume while next page loads does not duplicate the next-page request', async () => {
+  const provider = new Provider(); const c = new SpeechController(provider);
+  let nextCalls = 0, resolveNext;
+  c.play([], { next: () => { nextCalls++; return new Promise(resolve => { resolveNext = resolve; }); } });
+  assert.equal(c.state, 'waiting');
+  c.pause(); c.changeSettings({ rate: 1.25 }); c.resume();
+  assert.equal(nextCalls, 1); assert.equal(c.state, 'waiting');
+  resolveNext(queue('zh')); await tick();
+  assert.equal(provider.calls.length, 1); assert.equal(provider.calls[0].options.voice, zh);
+  c.stop();
+});
+test('native end without start is an explicit failure, never a successful sentence', async () => {
+  class Utterance { constructor(text) { this.text = text; } }
+  const provider = new BrowserSpeechProvider({ speak(utterance) { queueMicrotask(() => utterance.onend()); } }, Utterance);
+  await assert.rejects(provider.speak('Hello. Enjoy your reading.', { language: 'en', voice: en, rate: 1 }), /before starting/);
+});

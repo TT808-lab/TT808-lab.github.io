@@ -1,0 +1,87 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Course Reader 本地能力检查</title>
+<h1>本地翻译与语音能力检查</h1>
+<section style="padding:16px;background:#fff4d9;border:1px solid #d8bc75;margin-bottom:16px">
+<h2>Checkpoint 3：请实际听一下</h2>
+<p>请分别点击英文、中文试听，再按停止。下方会记录事件；请反馈你是否确实听到两种语言，以及停止是否生效。</p>
+<button id="directEn">英文试听（David）</button>
+<button id="directZh">中文试听（Huihui）</button>
+<button id="directPause">暂停</button><button id="directResume">继续</button><button id="directStop">停止</button>
+<pre id="audioResult" aria-live="polite">等待你点击试听。仅使用本机声音。</pre>
+</section>
+<p>仅使用自制测试短句；不读取书库，不调用付费 API，不上传正文。模型若未准备好，可由浏览器下载。</p>
+<button id="check">检查能力（不下载模型）</button>
+<button id="translate">准备本地模型并翻译测试短句</button>
+<button id="long">验证100段本地翻译</button>
+<button id="speech">验证本机中英文朗读</button>
+<pre id="result">等待检查</pre>
+<script type="module">
+import {openDatabase} from '../tools/course-reader/core/storage.mjs';
+import {BrowserTranslationProvider,TranslationController} from '../tools/course-reader/core/translation.mjs';
+import {BrowserSpeechProvider,SpeechController} from '../tools/course-reader/core/speech.mjs';
+const result=document.querySelector('#result');
+const audioResult=document.querySelector('#audioResult');
+let directUtterance;
+function directSample(language){
+  speechSynthesis.cancel();
+  const voices=speechSynthesis.getVoices().filter(v=>v.localService&&v.lang.toLowerCase().startsWith(language));
+  const voice=voices.find(v=>v.name.includes(language==='zh'?'Huihui':'David'))||voices[0];
+  if(!voice){audioResult.textContent='没有匹配的本机声音，请稍后再试。';return;}
+  const logs=[]; const start=performance.now();
+  const log=event=>{logs.push(`${Math.round(performance.now()-start)} ms: ${event}`);audioResult.textContent=logs.join('\n');};
+  directUtterance=new SpeechSynthesisUtterance(language==='zh'?'你好，这是中文本机声音测试。今天我们坐在窗边读一本书。你可以点击暂停、继续或停止，检查声音是否正常。':'Hello. This is the English local voice test. Today we are reading a book by the window. You can pause, resume, or stop to check the sound.');
+  directUtterance.voice=voice;directUtterance.lang=voice.lang;directUtterance.rate=1;
+  directUtterance.onstart=()=>log('start');directUtterance.onend=()=>log('end');directUtterance.onerror=e=>log('error: '+e.error);
+  log('click → speak: '+voice.name);speechSynthesis.speak(directUtterance);
+}
+document.querySelector('#directEn').onclick=()=>directSample('en');
+document.querySelector('#directZh').onclick=()=>directSample('zh');
+document.querySelector('#directPause').onclick=()=>{speechSynthesis.pause();audioResult.textContent+='\n点击暂停';};
+document.querySelector('#directResume').onclick=()=>{speechSynthesis.resume();audioResult.textContent+='\n点击继续';};
+document.querySelector('#directStop').onclick=()=>{speechSynthesis.cancel();audioResult.textContent+='\n点击停止';};
+document.querySelector('#speech').onclick=()=>{
+  const started=[];
+  const events=[];
+  const provider=new BrowserSpeechProvider();
+  const originalSpeak=provider.speak.bind(provider);
+  provider.speak=async(text,options)=>{
+    events.push({event:'request',lang:options.voice.lang,name:options.voice.name,time:performance.now()});
+    await originalSpeak(text,{...options,onStart:()=>{events.push({event:'start',time:performance.now()});options.onStart();}});
+    events.push({event:'end',time:performance.now()});
+  };
+  const controller=new SpeechController(provider,{
+    onHighlight:item=>{if(item)started.push({language:item.language,text:item.text});},
+    onState:state=>{result.textContent=JSON.stringify({state:state.state,error:state.error,started,events},null,2);}
+  });
+  controller.play([{text:'Hello. Enjoy your reading.',language:'en',unitId:'test-en'}, {text:'你好。祝你阅读愉快。',language:'zh',unitId:'test-zh'}]);
+};
+document.querySelector('#long').onclick=async()=>{
+  let repo;
+  const provider=new BrowserTranslationProvider();
+  try{
+    await provider.prepare('en','zh');
+    repo=await openDatabase({name:'course-reader-test-'+crypto.randomUUID()});
+    const controller=new TranslationController(repo,provider);
+    const units=Array.from({length:100},(_,i)=>({id:'paragraph-'+i,documentId:'synthetic-test',order:i,text:`Chapter ${i+1}. Alice did not meet Bob yesterday. She will meet him tomorrow.`}));
+    let completed=0;
+    const records=await controller.translateAll(units,'en','zh',{onState:r=>{if(r.status==='ready') result.textContent=`Completed ${++completed}/100`;}});
+    result.textContent=JSON.stringify({count:records.length,ready:records.filter(r=>r.status==='ready').length,ordered:records.every((r,i)=>r.unitId===units[i].id),first:records[0].text,last:records.at(-1).text,failed:records.filter(r=>r.status!=='ready')},null,2);
+  }catch(e){result.textContent=JSON.stringify({error:e.message});}
+  finally{repo?.close();await provider.destroy();}
+};
+document.querySelector('#check').onclick=async()=>{
+  const report={secureContext:isSecureContext,translator:typeof Translator,voices:[]};
+  if('speechSynthesis' in window) report.voices=speechSynthesis.getVoices().map(v=>({name:v.name,lang:v.lang,localService:v.localService}));
+  if('Translator' in window){ try{report.enZh=await Translator.availability({sourceLanguage:'en',targetLanguage:'zh'});}catch(e){report.error=e.message;} }
+  result.textContent=JSON.stringify(report,null,2);
+};
+document.querySelector('#translate').onclick=async()=>{
+  try{
+    if(!('Translator' in window)) throw Error('Translator API unavailable in this browser.');
+    const translator=await Translator.create({sourceLanguage:'en',targetLanguage:'zh',monitor(m){m.addEventListener('downloadprogress',e=>{result.textContent='Model download: '+Math.round(e.loaded*100)+'%';});}});
+    const source='Alice did not meet Bob yesterday. She will meet him tomorrow.';
+    const translation=await translator.translate(source);
+    result.textContent=JSON.stringify({source,translation},null,2);
+    translator.destroy();
+  }catch(e){result.textContent=JSON.stringify({error:e.message},null,2);}
+};
+</script></html>

@@ -1,0 +1,16 @@
+import http from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
+const root = process.cwd();
+http.createServer(async (req, res) => {
+  try {
+    const relative = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).replace(/^\/+/, '');
+    if (relative.split('/').some(p => p.startsWith('.'))) throw Error('Forbidden');
+    let file = path.resolve(root, relative);
+    if (file !== root && !file.startsWith(root + path.sep)) throw Error('Forbidden');
+    if ((await stat(file)).isDirectory()) file = path.join(file, 'index.html');
+    const types = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.pdf': 'application/pdf' };
+    res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    res.end(await readFile(file));
+  } catch { res.writeHead(404); res.end('Not found'); }
+}).listen(4179, '127.0.0.1', () => console.log('Course Reader local server: http://127.0.0.1:4179'));
