@@ -25,6 +25,7 @@ function applyLanguage() {
 }
 function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); }
 function setTab(tab) { $('pdfForm').classList.toggle('hidden', tab !== 'pdf'); $('textForm').classList.toggle('hidden', tab !== 'text'); $('pdfTab').classList.toggle('active', tab === 'pdf'); $('textTab').classList.toggle('active', tab === 'text'); }
+function syncQuickPager(doc, page) { const visible = doc?.type === 'pdf'; $('quickPager').classList.toggle('hidden', !visible); if (!visible) return; $('quickPage').textContent = `${page} / ${doc.totalPages}`; $('quickPrev').disabled = page <= 1; $('quickNext').disabled = page >= doc.totalPages; }
 
 async function renderPdfPage(blob, pageNum) {
   const key = await blob.arrayBuffer();
@@ -56,12 +57,12 @@ async function loadLibrary() {
 async function preparePdfDocument(doc, page = doc.position?.page || doc.anchor || 1) {
   currentPdfPage = null; currentTranslation.clear();
   $('readerTitle').textContent = doc.title; $('readerMeta').textContent = text(`PDF · 起始页 ${doc.anchor || 1} · 每批约 30 页`, `PDF · anchor ${doc.anchor || 1} · batches of about 30 pages`);
-  $('pageNumber').value = page; $('pageTotal').textContent = `/ ${doc.totalPages}`; $('showTranslation').checked = false;
+  $('pageNumber').value = page; $('pageTotal').textContent = `/ ${doc.totalPages}`; syncQuickPager(doc, page); $('showTranslation').checked = false;
   const next = nextBatch(doc, page); if (next) setStatus('pageStatus', text(`接近批次末尾时会准备第 ${next.start}–${next.end} 页。`, `Next batch ${next.start}–${next.end} will prepare near the end.`));
   await ensureAndShowPage(doc, page);
 }
 async function ensureAndShowPage(doc, page) {
-  page = Math.min(doc.totalPages, Math.max(1, Number(page) || 1)); $('pageNumber').value = page;
+  page = Math.min(doc.totalPages, Math.max(1, Number(page) || 1)); $('pageNumber').value = page; syncQuickPager(doc, page);
   try {
     const cached = await repo.getPage(doc.id, page);
     if (!cached) { setStatus('pageStatus', text('正在处理这一批页面…','Preparing this batch…')); await batcher.ensure(doc, page); }
@@ -77,6 +78,7 @@ async function ensureAndShowPage(doc, page) {
 }
 
 async function prepareTextDocument(doc) {
+  syncQuickPager(null, 0);
   currentPdfPage = null; currentTranslation.clear(); currentUnits = await repo.getUnits(doc.id); const sourceLanguage = languageOf(doc.rawText, doc.sourceLanguage); for (const unit of currentUnits) { const cachedTranslation = sourceLanguage === 'en' ? await translation.readyText(unit, 'en', 'zh') : null; if (cachedTranslation) currentTranslation.set(unit.id, cachedTranslation); } $('readerTitle').textContent = doc.title; $('readerMeta').textContent = text(`${currentUnits.length} 个原始段落 · 翻译默认关闭`, `${currentUnits.length} original paragraphs · translation is off by default`); $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en'); $('showTranslation').checked = false; renderContent(); const savedUnit = currentUnits.find(unit => unit.order === doc.position?.unit); if (savedUnit) document.querySelector(`[data-unit="${CSS.escape(savedUnit.id)}"]`)?.scrollIntoView({ block: 'center' }); renderBookmarks(doc); speech.stop(); loadVoices();
 }
 function renderContent() {
@@ -121,6 +123,7 @@ $('pdfTab').onclick = () => setTab('pdf'); $('textTab').onclick = () => setTab('
 $('importPdf').onclick = async () => { const file = $('pdfFile').files[0]; if (!file) return setStatus('pdfStatus', text('请选择 PDF 文件。','Choose a PDF file.'), true); try { $('importPdf').disabled = true; const data = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument({ data }).promise; const start = Math.min(pdf.numPages, Math.max(1, Number($('pdfStart').value) || 1)); current = await repo.importPdf({ blob: file, title: $('pdfTitle').value.trim() || file.name, totalPages: pdf.numPages, startPage: start }); pdfDocument = pdf; setStatus('pdfStatus', text('已保存，正在打开第一批…','Saved; opening the first batch…')); await openDocument(current.id); } catch (error) { setStatus('pdfStatus', error.message, true); } finally { $('importPdf').disabled = false; } };
 $('saveText').onclick = async () => { try { const rawText = $('rawText').value; current = await repo.saveText({ title: $('textTitle').value.trim() || text('粘贴文字','Pasted text'), rawText, sourceLanguage: $('textLanguage').value }); await openDocument(current.id); } catch (error) { setStatus('textStatus', error.message, true); } };
 $('prevPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('nextPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1); $('pageNumber').onchange = () => current?.type === 'pdf' && ensureAndShowPage(current, $('pageNumber').value);
+$('quickPrev').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('quickNext').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1);
 $('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateCurrent; $('showTranslation').onchange = renderContent;
 $('addBookmark').onclick = async () => { if (!current) return; const pageNum = current.type === 'pdf' ? Number($('pageNumber').value) : Number(current.position?.unit || 0); const bookmarks = [...(current.bookmarks || []).filter(mark => mark.pageNum !== pageNum), { pageNum, name: $('bookmarkName').value.trim() || text(`第 ${pageNum} 页`,`Page ${pageNum}`) }].sort((a,b) => a.pageNum - b.pageNum); current = await repo.updateDocument({ ...current, bookmarks }); renderBookmarks(current); $('bookmarkName').value = ''; };
 $('play').onclick = () => { try { speech.play(currentSpeechQueue()); } catch (error) { setStatus('speechStatus', error.message, true); } }; $('pause').onclick = () => speech.state === 'paused' ? speech.resume() : speech.pause(); $('stop').onclick = () => speech.stop(); $('rate').oninput = event => { const value = Number(event.target.value); $('rateValue').value = `${value.toFixed(2)}×`; speech.changeSettings({ rate: value }); }; $('voice').onchange = event => { const lang = languageOf(currentUnits.map(u => u.text).join('\n'), current?.sourceLanguage); speech.changeSettings({ language: lang, voiceURI: event.target.value }); };
