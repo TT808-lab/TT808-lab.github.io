@@ -10,6 +10,7 @@ let uiLanguage = localStorage.getItem('course-reader-ui') || 'zh';
 let repo, batcher, translation, speech, pdfDocument;
 let current = null, currentUnits = [], currentPdfPage = null, currentTranslation = new Map();
 let pdfSourceCache = new Map();
+let pageImageUrl = null;
 
 function setStatus(id, message, error = false) { const el = $(id); el.textContent = message || ''; el.classList.toggle('error', error); }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -19,6 +20,7 @@ function applyLanguage() {
   $('langZh').classList.toggle('active', uiLanguage === 'zh'); $('langEn').classList.toggle('active', uiLanguage === 'en');
   if (current && !$('reader').classList.contains('hidden')) {
     $('readerMeta').textContent = current.type === 'pdf' ? text(`PDF · 起始页 ${current.anchor || 1} · 每批约 30 页`, `PDF · anchor ${current.anchor || 1} · batches of about 30 pages`) : text(`${currentUnits.length} 个原始段落 · 翻译默认关闭`, `${currentUnits.length} original paragraphs · translation is off by default`);
+    if (current.type === 'pdf' && currentPdfPage) { const page = current.position?.page || current.anchor || 1; const batch = batchForPage(current, page); setStatus('pageStatus', text(`第 ${page} 页 · 当前批次 ${batch.start}–${batch.end}`, `Page ${page} · batch ${batch.start}–${batch.end}`)); renderContent(); }
   }
 }
 function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); }
@@ -64,8 +66,8 @@ async function ensureAndShowPage(doc, page) {
     const cached = await repo.getPage(doc.id, page);
     if (!cached) { setStatus('pageStatus', text('正在处理这一批页面…','Preparing this batch…')); await batcher.ensure(doc, page); }
     const pageData = await repo.getPage(doc.id, page); if (!pageData) throw new Error(text('页面处理失败。','Page processing failed.'));
-    currentPdfPage = pageData; currentUnits = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || text('此页没有可提取文字。','No extractable text on this page.') }];
-    const sourceLanguage = languageOf(currentUnits[0].text, doc.sourceLanguage); $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en');
+    currentPdfPage = pageData; currentUnits = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || '' }];
+    const sourceLanguage = currentUnits[0].text.trim() ? languageOf(currentUnits[0].text, doc.sourceLanguage) : null; $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en');
     if (sourceLanguage === 'en') { const cachedTranslation = await translation.readyText(currentUnits[0], 'en', 'zh'); if (cachedTranslation) currentTranslation.set(currentUnits[0].id, cachedTranslation); }
     const b = batchForPage(doc, page); const n = nextBatch(doc, page);
     setStatus('pageStatus', text(`第 ${page} 页 · 当前批次 ${b.start}–${b.end}${n ? ` · 下一批 ${n.start}–${n.end}` : ''}`, `Page ${page} · batch ${b.start}–${b.end}${n ? ` · next ${n.start}–${n.end}` : ''}`));
@@ -78,15 +80,19 @@ async function prepareTextDocument(doc) {
   currentPdfPage = null; currentTranslation.clear(); currentUnits = await repo.getUnits(doc.id); const sourceLanguage = languageOf(doc.rawText, doc.sourceLanguage); for (const unit of currentUnits) { const cachedTranslation = sourceLanguage === 'en' ? await translation.readyText(unit, 'en', 'zh') : null; if (cachedTranslation) currentTranslation.set(unit.id, cachedTranslation); } $('readerTitle').textContent = doc.title; $('readerMeta').textContent = text(`${currentUnits.length} 个原始段落 · 翻译默认关闭`, `${currentUnits.length} original paragraphs · translation is off by default`); $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en'); $('showTranslation').checked = false; renderContent(); const savedUnit = currentUnits.find(unit => unit.order === doc.position?.unit); if (savedUnit) document.querySelector(`[data-unit="${CSS.escape(savedUnit.id)}"]`)?.scrollIntoView({ block: 'center' }); renderBookmarks(doc); speech.stop(); loadVoices();
 }
 function renderContent() {
-  const show = $('showTranslation').checked; const lang = languageOf(currentUnits.map(u => u.text).join('\n'), current?.sourceLanguage);
-  $('content').innerHTML = currentUnits.map(unit => { const translated = currentTranslation.get(unit.id); return `<div class="unit" data-unit="${escapeHtml(unit.id)}"><div class="page-text">${escapeHtml(unit.text)}</div>${show && translated ? `<div class="translation">${escapeHtml(translated)}</div>` : ''}</div>`; }).join('') || `<div class="hint">${text('没有可显示内容。','Nothing to display.')}</div>`;
+  const show = $('showTranslation').checked; const lang = languageOf(currentUnits.map(u => u.text).join('\n'), current?.sourceLanguage); const hasText = currentUnits.some(unit => unit.text.trim());
+  if (pageImageUrl) { URL.revokeObjectURL(pageImageUrl); pageImageUrl = null; }
+  const image = currentPdfPage?.image && !hasText ? (pageImageUrl = URL.createObjectURL(currentPdfPage.image), `<img src="${pageImageUrl}" alt="${text('PDF 图片页','PDF image page')}" style="display:block;width:100%;max-height:68vh;object-fit:contain;border-radius:8px;margin-bottom:12px">`) : '';
+  const body = hasText ? currentUnits.map(unit => { const translated = currentTranslation.get(unit.id); return `<div class="unit" data-unit="${escapeHtml(unit.id)}"><div class="page-text">${escapeHtml(unit.text)}</div>${show && translated ? `<div class="translation">${escapeHtml(translated)}</div>` : ''}</div>`; }).join('') : `<div class="hint">${text('这是图片页，没有可提取文字，暂时不能朗读。请翻到下一页。','This is an image-only page, so there is no text to read aloud. Turn to the next page.')}</div>`;
+  $('content').innerHTML = image + body;
   document.querySelectorAll('[data-unit]').forEach(el => el.onclick = async () => { const unit = currentUnits.find(u => u.id === el.dataset.unit); if (unit) { current = await repo.updateDocument({ ...current, position: { unit: unit.order } }); const translatedUnit = { ...unit, translation: currentTranslation.get(unit.id) }; const translated = show && currentTranslation.has(unit.id); speech.play(speechItems([translatedUnit], translated ? 'zh' : lang, translated), { next: null }); } });
 }
 function renderBookmarks(doc) { $('bookmarks').innerHTML = (doc.bookmarks || []).length ? doc.bookmarks.map((mark, i) => `<div class="bookmark"><span>${escapeHtml(mark.name)} · ${mark.pageNum}</span><button class="btn fit" data-bookmark="${i}">${text('打开','Open')}</button></div>`).join('') : `<div class="hint">${text('还没有书签。','No bookmarks yet.')}</div>`; $('bookmarks').querySelectorAll('[data-bookmark]').forEach(btn => btn.onclick = () => doc.type === 'pdf' ? ensureAndShowPage(doc, doc.bookmarks[Number(btn.dataset.bookmark)].pageNum) : null); }
 async function openDocument(id) { current = await repo.getDocument(id); if (!current) return; if (current.type === 'pdf' && !current.totalPages) current = { ...current, totalPages: current.cachedMax || 1 }; setScreen('reader'); if (current.type === 'pdf') await preparePdfDocument(current); else await prepareTextDocument(current); }
 
 async function translateCurrent() {
-  const source = languageOf(currentUnits.map(u => u.text).join('\n'), current.sourceLanguage); if (source !== 'en') return;
+  const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { setStatus('translationStatus', text('此页没有可翻译的文字。','This page has no text to translate.'), true); return; }
+  const source = languageOf(sourceText, current.sourceLanguage); if (source !== 'en') return;
   const button = $('translateBtn'); button.disabled = true; setStatus('translationStatus', text('点击后准备本机翻译模型…','Preparing the local translation model…'));
   try {
     await translation.provider.prepare('en', 'zh', loaded => setStatus('translationStatus', `${text('下载翻译模型','Downloading translation model')} ${Math.round(loaded * 100)}%`));
