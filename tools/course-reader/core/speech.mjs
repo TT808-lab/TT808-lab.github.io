@@ -64,12 +64,8 @@ export class PiperSpeechProvider {
   } = {}) {
     this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessionPromise = null; this.sessionVoiceId = null;
     this.currentAudio = null; this.voicesList = voices; this.token = 0; this.timeoutMs = 45000;
-    // Default off — the curated PIPER_VOICES are configured in code but the
-    // user opts in via ?piper=1 because the onnx/voice download (~120 MB)
-    // blocks the experience on slow or restricted networks.
-    this.enabled = new URLSearchParams(globalThis.location?.search || '').get('piper') === '1';
   }
-  voices() { return this.enabled ? this.voicesList : []; }
+  voices() { return this.voicesList; }
   onVoicesChanged() { return () => {}; }
   async load() {
     if (!this.piper) this.piper = await import(this.moduleUrl);
@@ -90,7 +86,6 @@ export class PiperSpeechProvider {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
   }
   speak(text, { voice, rate, onStart, onProgress }) {
-    if (!this.enabled) return Promise.reject(new Error('Piper voices are opt-in: append ?piper=1 to the URL to enable them.'));
     if (!voice?.voiceId) return Promise.reject(new Error('Piper voice is unavailable.'));
     const token = ++this.token;
     return new Promise(async (resolve, reject) => {
@@ -158,7 +153,13 @@ export class SpeechController {
   voices(language) { return this.provider.voices().filter(v => v.lang.toLowerCase().startsWith(language) && (this.allowOnline || v.localService)); }
   voice(language) {
     const voices = this.voices(language);
-    return voices.find(v => v.voiceURI === this.preferences[language]) || voices.find(v => v.localService) || voices[0];
+    // Explicit user pick wins.
+    const preferred = voices.find(v => v.voiceURI === this.preferences[language]);
+    if (preferred) return preferred;
+    // Otherwise prefer browser voices — Piper voices need a one-time model
+    // download (~120 MB from Hugging Face) and silently deadlock on
+    // networks that block the host. Opt in by selecting a Piper voice.
+    return voices.find(v => v.provider !== 'piper' && v.localService) || voices.find(v => v.localService) || voices[0];
   }
   setState(state, error = null, detail = null) { this.state = state; this.error = error; this.onState({ state, error, detail, index: this.index }); }
   play(queue, { index = 0, next = null } = {}) {
