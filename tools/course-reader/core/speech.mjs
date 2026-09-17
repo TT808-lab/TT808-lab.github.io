@@ -65,7 +65,12 @@ export class PiperSpeechProvider {
     this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessionPromise = null; this.sessionVoiceId = null;
     this.currentAudio = null; this.voicesList = voices; this.token = 0; this.timeoutMs = 60000;
   }
-  voices() { return this.voicesList; }
+  // Piper voices are configured but hidden from the dropdown for now.
+  // The Chinese Piper model hangs >60s on real sentences in this environment
+  // even with crossOriginIsolated enabled — unusable. Flip this to
+  // `return this.voicesList;` when running on a faster machine or once
+  // Piper's Chinese phonemizer speeds up.
+  voices() { return []; }
   onVoicesChanged() { return () => {}; }
   async load() {
     if (!this.piper) this.piper = await import(this.moduleUrl);
