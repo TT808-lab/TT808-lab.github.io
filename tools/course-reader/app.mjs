@@ -4,6 +4,13 @@ import { batchForPage, nextBatch, paragraphs } from './core/model.mjs';
 import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
 import { HybridSpeechProvider, SpeechController, languageOf, speechItems } from './core/speech.mjs';
 
+// PDF.js ships a web worker for off-main-thread parsing. Without workerSrc,
+// large PDFs parse synchronously on the main thread and the import button
+// appears frozen. The CDN ships pdf.min.js + pdf.worker.min.js side-by-side.
+if (globalThis.pdfjsLib && !globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+  globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
 const $ = id => document.getElementById(id);
 const text = (zh, en) => uiLanguage === 'zh' ? zh : en;
 let uiLanguage = localStorage.getItem('course-reader-ui') || 'zh';
@@ -135,7 +142,7 @@ async function init() {
 $('langZh').onclick = () => { uiLanguage = 'zh'; localStorage.setItem('course-reader-ui', uiLanguage); applyLanguage(); void loadLibrary(); };
 $('langEn').onclick = () => { uiLanguage = 'en'; localStorage.setItem('course-reader-ui', uiLanguage); applyLanguage(); void loadLibrary(); };
 $('pdfTab').onclick = () => setTab('pdf'); $('textTab').onclick = () => setTab('text'); $('backHome').onclick = () => { speech.stop(); setScreen('home'); void loadLibrary(); };
-$('importPdf').onclick = async () => { const file = $('pdfFile').files[0]; if (!file) return setStatus('pdfStatus', text('请选择 PDF 文件。','Choose a PDF file.'), true); try { $('importPdf').disabled = true; const data = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument({ data }).promise; const start = Math.min(pdf.numPages, Math.max(1, Number($('pdfStart').value) || 1)); current = await repo.importPdf({ blob: file, title: $('pdfTitle').value.trim() || file.name, totalPages: pdf.numPages, startPage: start }); pdfDocument = pdf; setStatus('pdfStatus', text('已保存，正在打开第一批…','Saved; opening the first batch…')); await openDocument(current.id); } catch (error) { setStatus('pdfStatus', error.message, true); } finally { $('importPdf').disabled = false; } };
+$('importPdf').onclick = async () => { const file = $('pdfFile').files[0]; if (!file) return setStatus('pdfStatus', text('请选择 PDF 文件。','Choose a PDF file.'), true); try { $('importPdf').disabled = true; setStatus('pdfStatus', text('正在解析 PDF…','Parsing PDF…')); const data = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument({ data }).promise; const start = Math.min(pdf.numPages, Math.max(1, Number($('pdfStart').value) || 1)); current = await repo.importPdf({ blob: file, title: $('pdfTitle').value.trim() || file.name, totalPages: pdf.numPages, startPage: start }); pdfDocument = pdf; setStatus('pdfStatus', text('已保存，正在打开第一批…','Saved; opening the first batch…')); await openDocument(current.id); } catch (error) { setStatus('pdfStatus', error.message, true); } finally { $('importPdf').disabled = false; } };
 $('saveText').onclick = async () => { try { const rawText = $('rawText').value; current = await repo.saveText({ title: $('textTitle').value.trim() || text('粘贴文字','Pasted text'), rawText, sourceLanguage: $('textLanguage').value }); await openDocument(current.id); } catch (error) { setStatus('textStatus', error.message, true); } };
 $('prevPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('nextPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1); $('pageNumber').onchange = () => current?.type === 'pdf' && ensureAndShowPage(current, $('pageNumber').value);
 $('quickPrev').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('quickNext').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1);
