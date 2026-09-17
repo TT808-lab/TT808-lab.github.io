@@ -64,9 +64,8 @@ export class PiperSpeechProvider {
   } = {}) {
     this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessionPromise = null; this.sessionVoiceId = null;
     this.currentAudio = null; this.voicesList = voices; this.token = 0; this.timeoutMs = 45000;
-    this.enabled = new URLSearchParams(globalThis.location?.search || '').get('piper') === '1';
   }
-  voices() { return this.enabled ? this.voicesList : []; }
+  voices() { return this.voicesList; }
   onVoicesChanged() { return () => {}; }
   async load() {
     if (!this.piper) this.piper = await import(this.moduleUrl);
@@ -87,7 +86,6 @@ export class PiperSpeechProvider {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
   }
   speak(text, { voice, rate, onStart, onProgress }) {
-    if (!this.enabled) return Promise.reject(new Error('Piper local voice is experimental and is disabled by default. Add ?piper=1 to test it.'));
     if (!voice?.voiceId) return Promise.reject(new Error('Piper voice is unavailable.'));
     const token = ++this.token;
     return new Promise(async (resolve, reject) => {
