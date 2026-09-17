@@ -57,29 +57,43 @@ export class PiperSpeechProvider {
       { provider: 'piper', voiceURI: 'piper:en_US-kristin-medium', voiceId: 'en_US-kristin-medium', name: 'Piper Kristin English', lang: 'en-US', localService: true }
     ]
   } = {}) {
-    this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessions = new Map();
-    this.currentAudio = null; this.voicesList = voices; this.token = 0;
+    this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessionPromise = null; this.sessionVoiceId = null;
+    this.currentAudio = null; this.voicesList = voices; this.token = 0; this.timeoutMs = 45000;
+    this.enabled = new URLSearchParams(globalThis.location?.search || '').get('piper') === '1';
   }
-  voices() { return this.voicesList; }
+  voices() { return this.enabled ? this.voicesList : []; }
   onVoicesChanged() { return () => {}; }
   async load() {
     if (!this.piper) this.piper = await import(this.moduleUrl);
     return this.piper;
   }
-  async session(voiceId) {
-    if (!this.sessions.has(voiceId)) {
+  async session(voiceId, progress) {
+    if (this.sessionVoiceId !== voiceId || !this.sessionPromise) {
       const piper = await this.load();
-      this.sessions.set(voiceId, piper.TtsSession.create({ voiceId, wasmPaths: this.wasmPaths }));
+      piper.TtsSession._instance = null;
+      this.sessionVoiceId = voiceId;
+      this.sessionPromise = piper.TtsSession.create({ voiceId, wasmPaths: this.wasmPaths, progress });
     }
-    return this.sessions.get(voiceId);
+    return this.sessionPromise;
   }
-  speak(text, { voice, rate, onStart }) {
+  withTimeout(promise, message) {
+    let timer;
+    const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), this.timeoutMs); });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+  speak(text, { voice, rate, onStart, onProgress }) {
+    if (!this.enabled) return Promise.reject(new Error('Piper local voice is experimental and is disabled by default. Add ?piper=1 to test it.'));
     if (!voice?.voiceId) return Promise.reject(new Error('Piper voice is unavailable.'));
     const token = ++this.token;
     return new Promise(async (resolve, reject) => {
       try {
-        const session = await this.session(voice.voiceId);
-        const wav = await session.predict(text);
+        const progress = event => {
+          if (token !== this.token) return;
+          if (event?.url === 'tts://inference-progress') onProgress?.({ phase: 'inference', loaded: event.loaded, total: event.total });
+          else onProgress?.({ phase: 'download', loaded: event.loaded, total: event.total });
+        };
+        const session = await this.withTimeout(this.session(voice.voiceId, progress), 'Piper voice preparation timed out. Check the network and try again, or choose a system voice.');
+        const wav = await this.withTimeout(session.predict(text), 'Piper speech generation timed out. Try a shorter paragraph or choose a system voice.');
         if (token !== this.token) return resolve();
         const url = URL.createObjectURL(wav);
         const audio = new Audio(url);
@@ -105,7 +119,6 @@ export class HybridSpeechProvider {
   }
   voices() {
     return [
-      ...this.piper.voices(),
       ...this.browser.voices().map(voice => ({
         provider: 'browser',
         voice,
@@ -113,7 +126,8 @@ export class HybridSpeechProvider {
         name: voice.name,
         lang: voice.lang,
         localService: voice.localService
-      }))
+      })),
+      ...this.piper.voices()
     ];
   }
   onVoicesChanged(callback) { return this.browser.onVoicesChanged(callback); }
@@ -138,7 +152,7 @@ export class SpeechController {
     const voices = this.voices(language);
     return voices.find(v => v.voiceURI === this.preferences[language]) || voices.find(v => v.localService) || voices[0];
   }
-  setState(state, error = null) { this.state = state; this.error = error; this.onState({ state, error, index: this.index }); }
+  setState(state, error = null, detail = null) { this.state = state; this.error = error; this.onState({ state, error, detail, index: this.index }); }
   play(queue, { index = 0, next = null } = {}) {
     this.stop(); this.queue = queue; this.index = index; this.next = next;
     this.setState('playing'); void this.advance(this.token);
@@ -164,6 +178,7 @@ export class SpeechController {
       if (!voice) throw new Error(`No ${item.language === 'zh' ? 'Chinese' : 'English'} voice is available. Choose or install a matching voice.`);
       this.setState(voice.provider === 'piper' ? 'preparing' : 'playing');
       await this.provider.speak(item.text, { language: item.language, voice, rate: this.rate,
+        onProgress: detail => { if (token === this.token) this.setState('preparing', null, detail); },
         onStart: () => { if (token === this.token) { this.setState('playing'); this.onHighlight(item); } } });
       if (token !== this.token) return;
       this.index++;
