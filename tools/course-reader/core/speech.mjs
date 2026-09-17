@@ -1,6 +1,14 @@
 import { sentences } from './model.mjs';
 import { splitChunks } from './translation.mjs';
 
+// Selected Piper voices. `voiceId` must match a key in piper-tts-web.js's
+// MODEL_PATHS map (otherwise the model file won't resolve on Hugging Face).
+// Swap by editing this list — the constructor default picks it up.
+export const PIPER_VOICES = [
+  { voiceURI: 'piper:zh_CN-chaowen-medium', voiceId: 'zh_CN-chaowen-medium', name: 'Piper Chaowen Chinese', lang: 'zh-CN' /* ~63 MB */ },
+  { voiceURI: 'piper:en_US-kristin-medium', voiceId: 'en_US-kristin-medium', name: 'Piper Kristin English', lang: 'en-US' /* ~63 MB */ }
+].map(voice => ({ ...voice, provider: 'piper', localService: true }));
+
 export function languageOf(text, choice = 'auto') {
   if (choice === 'zh' || choice === 'en') return choice;
   return /\p{Script=Han}/u.test(text) ? 'zh' : 'en';
@@ -52,10 +60,7 @@ export class PiperSpeechProvider {
       piperData: new URL('../vendor/piper-wasm/build/piper_phonemize.data', import.meta.url).href,
       piperWasm: new URL('../vendor/piper-wasm/build/piper_phonemize.wasm', import.meta.url).href
     },
-    voices = [
-      { provider: 'piper', voiceURI: 'piper:zh_CN-chaowen-medium', voiceId: 'zh_CN-chaowen-medium', name: 'Piper Chaowen Chinese', lang: 'zh-CN', localService: true },
-      { provider: 'piper', voiceURI: 'piper:en_US-kristin-medium', voiceId: 'en_US-kristin-medium', name: 'Piper Kristin English', lang: 'en-US', localService: true }
-    ]
+    voices = PIPER_VOICES
   } = {}) {
     this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessionPromise = null; this.sessionVoiceId = null;
     this.currentAudio = null; this.voicesList = voices; this.token = 0; this.timeoutMs = 45000;
