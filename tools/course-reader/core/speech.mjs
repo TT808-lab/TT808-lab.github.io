@@ -63,13 +63,9 @@ export class PiperSpeechProvider {
     voices = PIPER_VOICES
   } = {}) {
     this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessionPromise = null; this.sessionVoiceId = null;
-    this.currentAudio = null; this.voicesList = voices; this.token = 0; this.timeoutMs = 45000;
+    this.currentAudio = null; this.voicesList = voices; this.token = 0; this.timeoutMs = 60000;
   }
-  // Piper voices are configured but hidden from the dropdown for now —
-  // they require a one-time ~120 MB model download from Hugging Face that
-  // deadlocks on networks that block the host. Keep PIPER_VOICES / the
-  // class around so they can be re-enabled in one line when needed.
-  voices() { return []; }
+  voices() { return this.voicesList; }
   onVoicesChanged() { return () => {}; }
   async load() {
     if (!this.piper) this.piper = await import(this.moduleUrl);
