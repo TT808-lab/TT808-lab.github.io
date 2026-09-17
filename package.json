@@ -11,5 +11,9 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "playwright": "^1.63.0"
+  },
+  "dependencies": {
+    "@diffusionstudio/piper-wasm": "^1.0.0",
+    "@mintplex-labs/piper-tts-web": "^1.0.5"
   }
 }

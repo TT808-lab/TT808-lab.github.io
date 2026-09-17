@@ -2,7 +2,7 @@ import { openDatabase } from './core/storage.mjs';
 import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, paragraphs } from './core/model.mjs';
 import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
-import { BrowserSpeechProvider, SpeechController, languageOf, speechItems } from './core/speech.mjs';
+import { HybridSpeechProvider, SpeechController, languageOf, speechItems } from './core/speech.mjs';
 
 const $ = id => document.getElementById(id);
 const text = (zh, en) => uiLanguage === 'zh' ? zh : en;
@@ -112,11 +112,11 @@ function playCurrentReading() {
   speech.play(queue, { next: async () => { const nextPage = Number($('pageNumber').value) + 1; if (nextPage > current.totalPages) return null; await ensureAndShowPage(current, nextPage); return currentSpeechQueue(); } });
 }
 function loadVoices() { const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { $('voice').innerHTML = `<option>${text('图片页无可用音色','No voice needed for an image-only page')}</option>`; return; } const lang = languageOf(sourceText, current?.sourceLanguage); const voices = speech.voices(lang); $('voice').innerHTML = voices.length ? voices.map(v => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})${v.localService ? ' · Local' : ''}</option>`).join('') : `<option>${text('未检测到匹配的本机音色','No matching local voice')}</option>`; const selected = speech.voice(lang); if (selected) $('voice').value = selected.voiceURI; }
-function updateSpeechState({ state, error }) { setStatus('speechStatus', error || ({playing:text('朗读中','Playing'),paused:text('已暂停','Paused'),waiting:text('准备下一段','Preparing next'),stopped:text('已停止','Stopped'),error:text('朗读失败','Speech error')}[state] || state), Boolean(error)); document.querySelectorAll('.unit').forEach(el => el.classList.remove('playing')); }
+function updateSpeechState({ state, error }) { setStatus('speechStatus', error || ({preparing:text('正在准备本地语音，首次使用会下载音色模型…','Preparing local voice; first use downloads the voice model…'),playing:text('朗读中','Playing'),paused:text('已暂停','Paused'),waiting:text('准备下一段','Preparing next'),stopped:text('已停止','Stopped'),error:text('朗读失败','Speech error')}[state] || state), Boolean(error)); document.querySelectorAll('.unit').forEach(el => el.classList.remove('playing')); }
 
 async function init() {
   repo = await openDatabase(); await repo.migrateLegacy(bookId => { try { return JSON.parse(localStorage.getItem(`reader_notes:${bookId}`)); } catch { return null; } });
-  const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 }; const provider = new BrowserSpeechProvider();
+  const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 }; const provider = new HybridSpeechProvider();
   speech = new SpeechController(provider, { preferences: prefs.voices || {}, rate: prefs.rate || 1, onState: updateSpeechState, onHighlight: item => { document.querySelectorAll('.unit').forEach(el => el.classList.toggle('playing', el.dataset.unit === item?.unitId)); }, onPreference: value => { void repo.put('preferences', { id: 'tts', ...value }); } });
   translation = new TranslationController(repo, new BrowserTranslationProvider()); batcher = new BatchProcessor(repo, renderPdfPage);
   provider.onVoicesChanged(loadVoices); $('rate').value = speech.rate; $('rateValue').value = `${speech.rate}×`; loadVoices(); await loadLibrary(); applyLanguage();

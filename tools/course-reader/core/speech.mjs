@@ -31,7 +31,7 @@ export class BrowserSpeechProvider {
       this.current = utterance;
       let started = false;
       const requestedAt = performance.now();
-      utterance.voice = voice; utterance.lang = voice.lang || (language === 'zh' ? 'zh-CN' : 'en-US'); utterance.rate = rate;
+      utterance.voice = voice.voice || voice; utterance.lang = voice.lang || voice.voice?.lang || (language === 'zh' ? 'zh-CN' : 'en-US'); utterance.rate = rate;
       utterance.onstart = () => { started = true; onStart?.(); };
       utterance.onend = () => !started && text.length > 10 && performance.now() - requestedAt < 200
         ? reject(new Error('Speech ended before starting. Check local audio and voice availability.')) : resolve();
@@ -42,6 +42,89 @@ export class BrowserSpeechProvider {
   pause() { this.synthesis?.pause(); }
   resume() { this.synthesis?.resume(); }
   stop() { this.synthesis?.cancel(); this.current = null; }
+}
+
+export class PiperSpeechProvider {
+  constructor({
+    moduleUrl = new URL('../vendor/piper-tts-web/dist/piper-tts-web.js', import.meta.url).href,
+    wasmPaths = {
+      onnxWasm: new URL('../vendor/onnxruntime-web/dist/', import.meta.url).href,
+      piperData: new URL('../vendor/piper-wasm/build/piper_phonemize.data', import.meta.url).href,
+      piperWasm: new URL('../vendor/piper-wasm/build/piper_phonemize.wasm', import.meta.url).href
+    },
+    voices = [
+      { provider: 'piper', voiceURI: 'piper:zh_CN-chaowen-medium', voiceId: 'zh_CN-chaowen-medium', name: 'Piper Chaowen Chinese', lang: 'zh-CN', localService: true },
+      { provider: 'piper', voiceURI: 'piper:en_US-kristin-medium', voiceId: 'en_US-kristin-medium', name: 'Piper Kristin English', lang: 'en-US', localService: true }
+    ]
+  } = {}) {
+    this.moduleUrl = moduleUrl; this.wasmPaths = wasmPaths; this.piper = null; this.sessions = new Map();
+    this.currentAudio = null; this.voicesList = voices; this.token = 0;
+  }
+  voices() { return this.voicesList; }
+  onVoicesChanged() { return () => {}; }
+  async load() {
+    if (!this.piper) this.piper = await import(this.moduleUrl);
+    return this.piper;
+  }
+  async session(voiceId) {
+    if (!this.sessions.has(voiceId)) {
+      const piper = await this.load();
+      this.sessions.set(voiceId, piper.TtsSession.create({ voiceId, wasmPaths: this.wasmPaths }));
+    }
+    return this.sessions.get(voiceId);
+  }
+  speak(text, { voice, rate, onStart }) {
+    if (!voice?.voiceId) return Promise.reject(new Error('Piper voice is unavailable.'));
+    const token = ++this.token;
+    return new Promise(async (resolve, reject) => {
+      try {
+        const session = await this.session(voice.voiceId);
+        const wav = await session.predict(text);
+        if (token !== this.token) return resolve();
+        const url = URL.createObjectURL(wav);
+        const audio = new Audio(url);
+        this.currentAudio = audio;
+        audio.playbackRate = rate || 1;
+        audio.onplaying = () => { if (token === this.token) onStart?.(); };
+        audio.onended = () => { URL.revokeObjectURL(url); if (this.currentAudio === audio) this.currentAudio = null; resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Piper audio playback failed.')); };
+        await audio.play();
+      } catch (error) {
+        reject(new Error(`Piper speech failed: ${error?.message || error}`));
+      }
+    });
+  }
+  pause() { this.currentAudio?.pause(); }
+  resume() { void this.currentAudio?.play(); }
+  stop() { this.token++; if (this.currentAudio) { this.currentAudio.pause(); this.currentAudio.currentTime = 0; this.currentAudio = null; } }
+}
+
+export class HybridSpeechProvider {
+  constructor(browser = new BrowserSpeechProvider(), piper = new PiperSpeechProvider()) {
+    this.browser = browser; this.piper = piper; this.active = null;
+  }
+  voices() {
+    return [
+      ...this.piper.voices(),
+      ...this.browser.voices().map(voice => ({
+        provider: 'browser',
+        voice,
+        voiceURI: voice.voiceURI,
+        name: voice.name,
+        lang: voice.lang,
+        localService: voice.localService
+      }))
+    ];
+  }
+  onVoicesChanged(callback) { return this.browser.onVoicesChanged(callback); }
+  speak(text, options) {
+    this.stop();
+    this.active = options.voice?.provider === 'piper' ? this.piper : this.browser;
+    return this.active.speak(text, options);
+  }
+  pause() { this.active?.pause(); }
+  resume() { this.active?.resume(); }
+  stop() { this.browser.stop(); this.piper.stop(); this.active = null; }
 }
 
 export class SpeechController {
@@ -79,9 +162,9 @@ export class SpeechController {
       const item = this.queue[this.index];
       const voice = this.voice(item.language);
       if (!voice) throw new Error(`No ${item.language === 'zh' ? 'Chinese' : 'English'} voice is available. Choose or install a matching voice.`);
-      this.setState('playing');
+      this.setState(voice.provider === 'piper' ? 'preparing' : 'playing');
       await this.provider.speak(item.text, { language: item.language, voice, rate: this.rate,
-        onStart: () => { if (token === this.token) this.onHighlight(item); } });
+        onStart: () => { if (token === this.token) { this.setState('playing'); this.onHighlight(item); } } });
       if (token !== this.token) return;
       this.index++;
       if (this.state === 'paused') { this.resumePending = true; return; }
