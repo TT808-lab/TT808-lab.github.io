@@ -9,6 +9,13 @@ export const PIPER_VOICES = [
   { voiceURI: 'piper:en_US-kristin-medium', voiceId: 'en_US-kristin-medium', name: 'Piper Kristin English', lang: 'en-US' /* ~63 MB */ }
 ].map(voice => ({ ...voice, provider: 'piper', localService: true }));
 
+// MiniMax voice IDs are kept in the relay configuration rather than embedded
+// API credentials. The documented Chinese voice is a useful single default;
+// the relay can accept another voice ID later without changing the reader.
+export const MINIMAX_VOICES = [
+  { voiceURI: 'minimax:male-qn-qingse', voiceId: 'male-qn-qingse', name: 'MiniMax 青涩中文', lang: 'zh-CN', provider: 'minimax', localService: false }
+];
+
 export function languageOf(text, choice = 'auto') {
   if (choice === 'zh' || choice === 'en') return choice;
   return /\p{Script=Han}/u.test(text) ? 'zh' : 'en';
@@ -121,9 +128,72 @@ export class PiperSpeechProvider {
   stop() { this.token++; if (this.currentAudio) { this.currentAudio.pause(); this.currentAudio.currentTime = 0; this.currentAudio = null; } }
 }
 
+export class MiniMaxSpeechProvider {
+  constructor({ endpoint = '', model = 'speech-2.8-turbo', relaySecret = '', fetcher = globalThis.fetch, AudioCtor = globalThis.Audio, urlApi = globalThis.URL } = {}) {
+    this.endpoint = endpoint; this.model = model; this.relaySecret = relaySecret;
+    this.fetcher = fetcher; this.AudioCtor = AudioCtor; this.urlApi = urlApi;
+    this.currentAudio = null; this.abortController = null; this.token = 0;
+  }
+  setEndpoint(endpoint, relaySecret = this.relaySecret, model = this.model) { this.endpoint = String(endpoint || '').trim(); this.relaySecret = relaySecret; if (model) this.model = model; }
+  voices() { return this.endpoint ? MINIMAX_VOICES : []; }
+  onVoicesChanged() { return () => {}; }
+  speak(text, { voice, language, rate, onStart, onProgress }) {
+    if (!this.endpoint) return Promise.reject(new Error('MiniMax 中转地址尚未配置。'));
+    if (!this.fetcher || !this.AudioCtor) return Promise.reject(new Error('当前浏览器不支持 MiniMax 音频播放。'));
+    const token = ++this.token;
+    this.abortController?.abort();
+    const controller = new AbortController(); this.abortController = controller;
+    onProgress?.({ phase: 'request', provider: 'minimax' });
+    return new Promise(async (resolve, reject) => {
+      let objectUrl = null;
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.relaySecret) headers['X-Course-Reader-Relay-Secret'] = this.relaySecret;
+        const response = await this.fetcher(this.endpoint, {
+          method: 'POST', headers, signal: controller.signal,
+          body: JSON.stringify({ text, language, voiceId: voice?.voiceId, model: this.model, rate })
+        });
+        if (!response.ok) {
+          let detail = '';
+          try { detail = (await response.json())?.error || ''; } catch { /* keep status */ }
+          throw new Error(detail || `MiniMax 中转失败（HTTP ${response.status}）。`);
+        }
+        const blob = await response.blob();
+        if (!blob.size) throw new Error('MiniMax 返回了空音频。');
+        if (token !== this.token) return resolve();
+        objectUrl = this.urlApi.createObjectURL(blob);
+        const audio = new this.AudioCtor(objectUrl);
+        this.currentAudio = audio;
+        audio.playbackRate = 1;
+        audio.onplaying = () => { if (token === this.token) onStart?.(); };
+        audio.onended = () => {
+          if (objectUrl) this.urlApi.revokeObjectURL(objectUrl);
+          if (this.currentAudio === audio) this.currentAudio = null;
+          resolve();
+        };
+        audio.onerror = () => {
+          if (objectUrl) this.urlApi.revokeObjectURL(objectUrl);
+          reject(new Error('MiniMax 音频播放失败。'));
+        };
+        await audio.play();
+      } catch (error) {
+        if (objectUrl) this.urlApi.revokeObjectURL(objectUrl);
+        if (error?.name === 'AbortError' || token !== this.token) return resolve();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+  pause() { this.currentAudio?.pause(); }
+  resume() { void this.currentAudio?.play(); }
+  stop() {
+    this.token++; this.abortController?.abort(); this.abortController = null;
+    if (this.currentAudio) { this.currentAudio.pause(); this.currentAudio.currentTime = 0; this.currentAudio = null; }
+  }
+}
+
 export class HybridSpeechProvider {
-  constructor(browser = new BrowserSpeechProvider(), piper = new PiperSpeechProvider()) {
-    this.browser = browser; this.piper = piper; this.active = null;
+  constructor(browser = new BrowserSpeechProvider(), piper = new PiperSpeechProvider(), minimax = new MiniMaxSpeechProvider()) {
+    this.browser = browser; this.piper = piper; this.minimax = minimax; this.active = null;
   }
   voices() {
     return [
@@ -135,18 +205,20 @@ export class HybridSpeechProvider {
         lang: voice.lang,
         localService: voice.localService
       })),
+      ...this.minimax.voices(),
       ...this.piper.voices()
     ];
   }
   onVoicesChanged(callback) { return this.browser.onVoicesChanged(callback); }
+  setMinimaxEndpoint(endpoint, relaySecret = '', model) { this.minimax.setEndpoint(endpoint, relaySecret, model); }
   speak(text, options) {
     this.stop();
-    this.active = options.voice?.provider === 'piper' ? this.piper : this.browser;
+    this.active = options.voice?.provider === 'piper' ? this.piper : options.voice?.provider === 'minimax' ? this.minimax : this.browser;
     return this.active.speak(text, options);
   }
   pause() { this.active?.pause(); }
   resume() { this.active?.resume(); }
-  stop() { this.browser.stop(); this.piper.stop(); this.active = null; }
+  stop() { this.browser.stop(); this.piper.stop(); this.minimax.stop(); this.active = null; }
 }
 
 export class SpeechController {
@@ -155,7 +227,7 @@ export class SpeechController {
     this.onState = onState; this.onHighlight = onHighlight; this.onPreference = onPreference;
     this.state = 'stopped'; this.queue = []; this.index = 0; this.token = 0; this.allowOnline = false;
   }
-  voices(language) { return this.provider.voices().filter(v => v.lang.toLowerCase().startsWith(language) && (this.allowOnline || v.localService)); }
+  voices(language) { return this.provider.voices().filter(v => v.lang.toLowerCase().startsWith(language) && (this.allowOnline || v.localService || v.provider === 'minimax')); }
   voice(language) {
     const voices = this.voices(language);
     // Explicit user pick wins.
@@ -164,7 +236,7 @@ export class SpeechController {
     // Otherwise prefer browser voices — Piper voices need a one-time model
     // download (~120 MB from Hugging Face) and silently deadlock on
     // networks that block the host. Opt in by selecting a Piper voice.
-    return voices.find(v => v.provider !== 'piper' && v.localService) || voices.find(v => v.localService) || voices[0];
+    return voices.find(v => v.provider === 'minimax') || voices.find(v => v.provider !== 'piper' && v.localService) || voices.find(v => v.localService) || voices[0];
   }
   setState(state, error = null, detail = null) { this.state = state; this.error = error; this.onState({ state, error, detail, index: this.index }); }
   play(queue, { index = 0, next = null } = {}) {
@@ -190,7 +262,7 @@ export class SpeechController {
       const item = this.queue[this.index];
       const voice = this.voice(item.language);
       if (!voice) throw new Error(`No ${item.language === 'zh' ? 'Chinese' : 'English'} voice is available. Choose or install a matching voice.`);
-      this.setState(voice.provider === 'piper' ? 'preparing' : 'playing');
+      this.setState(['piper', 'minimax'].includes(voice.provider) ? 'preparing' : 'playing');
       await this.provider.speak(item.text, { language: item.language, voice, rate: this.rate,
         onProgress: detail => { if (token === this.token) this.setState('preparing', null, detail); },
         onStart: () => { if (token === this.token) { this.setState('playing'); this.onHighlight(item); } } });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BrowserSpeechProvider, SpeechController, speechItems } from '../tools/course-reader/core/speech.mjs';
+import { BrowserSpeechProvider, HybridSpeechProvider, MiniMaxSpeechProvider, SpeechController, speechItems } from '../tools/course-reader/core/speech.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const en = { voiceURI: 'en', lang: 'en-US', localService: true };
 const zh = { voiceURI: 'zh', lang: 'zh-CN', localService: true };
@@ -62,4 +62,28 @@ test('native end without start is an explicit failure, never a successful senten
   class Utterance { constructor(text) { this.text = text; } }
   const provider = new BrowserSpeechProvider({ speak(utterance) { queueMicrotask(() => utterance.onend()); } }, Utterance);
   await assert.rejects(provider.speak('Hello. Enjoy your reading.', { language: 'en', voice: en, rate: 1 }), /before starting/);
+});
+
+test('MiniMax provider sends only the current chunk and plays returned audio', async () => {
+  const calls = []; let started = 0;
+  class Audio {
+    constructor(url) { this.url = url; this.playbackRate = 1; }
+    async play() { this.onplaying?.(); queueMicrotask(() => this.onended?.()); }
+    pause() {}
+  }
+  const fetcher = async (endpoint, options) => {
+    calls.push({ endpoint, options, body: JSON.parse(options.body) });
+    return { ok: true, blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/mpeg' }) };
+  };
+  const urlApi = { createObjectURL: blob => `blob:${blob.size}`, revokeObjectURL() {} };
+  const provider = new MiniMaxSpeechProvider({ endpoint: 'http://relay.test/api/minimax-tts', fetcher, AudioCtor: Audio, urlApi });
+  const voice = provider.voices()[0];
+  await provider.speak('当前句子。', { voice, language: 'zh', rate: 1.1, onStart: () => started++ });
+  assert.equal(calls.length, 1); assert.equal(calls[0].body.text, '当前句子。'); assert.equal(calls[0].body.voiceId, 'male-qn-qingse'); assert.equal(calls[0].body.rate, 1.1); assert.equal(started, 1);
+});
+
+test('hybrid provider routes MiniMax voice without changing browser fallback', () => {
+  const browser = new Provider(); const minimax = new MiniMaxSpeechProvider({ endpoint: 'http://relay.test' });
+  const hybrid = new HybridSpeechProvider(browser, { voices: () => [], stop() {}, pause() {}, resume() {} }, minimax);
+  assert.equal(hybrid.voices().some(v => v.provider === 'minimax'), true);
 });

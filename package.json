@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check tools/course-reader/core/model.mjs && node --check tools/course-reader/core/storage.mjs && node --check tools/course-reader/core/batches.mjs && node --check tools/course-reader/core/translation.mjs && node --check tools/course-reader/core/speech.mjs && node --check tools/course-reader/app.mjs"
+    "check": "node --check tools/course-reader/core/model.mjs && node --check tools/course-reader/core/storage.mjs && node --check tools/course-reader/core/batches.mjs && node --check tools/course-reader/core/translation.mjs && node --check tools/course-reader/core/speech.mjs && node --check tools/course-reader/app.mjs && node --check scripts/serve.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5",

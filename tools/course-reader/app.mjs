@@ -15,6 +15,7 @@ const $ = id => document.getElementById(id);
 const text = (zh, en) => uiLanguage === 'zh' ? zh : en;
 let uiLanguage = localStorage.getItem('course-reader-ui') || 'zh';
 let repo, batcher, translation, speech, pdfDocument;
+let speechProvider;
 let current = null, currentUnits = [], currentPdfPage = null, currentTranslation = new Map();
 let pdfSourceCache = new Map();
 let pageImageUrl = null;
@@ -118,9 +119,11 @@ function playCurrentReading() {
   if (current?.type !== 'pdf') { speech.play(queue); return; }
   speech.play(queue, { next: async () => { const nextPage = Number($('pageNumber').value) + 1; if (nextPage > current.totalPages) return null; await ensureAndShowPage(current, nextPage); return currentSpeechQueue(); } });
 }
-function loadVoices() { const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { $('voice').innerHTML = `<option>${text('图片页无可用音色','No voice needed for an image-only page')}</option>`; return; } const lang = languageOf(sourceText, current?.sourceLanguage); const voices = speech.voices(lang); $('voice').innerHTML = voices.length ? voices.map(v => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})${v.localService ? ' · Local' : ''}</option>`).join('') : `<option>${text('未检测到匹配的本机音色','No matching local voice')}</option>`; const selected = speech.voice(lang); if (selected) $('voice').value = selected.voiceURI; }
+function loadVoices() { const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { $('voice').innerHTML = `<option>${text('图片页无可用音色','No voice needed for an image-only page')}</option>`; return; } const lang = languageOf(sourceText, current?.sourceLanguage); const voices = speech.voices(lang); $('voice').innerHTML = voices.length ? voices.map(v => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})${v.provider === 'minimax' ? ' · MiniMax' : v.localService ? ' · Local' : ''}</option>`).join('') : `<option>${text('未检测到匹配的本机音色','No matching local voice')}</option>`; const selected = speech.voice(lang); if (selected) $('voice').value = selected.voiceURI; }
 function updateSpeechState({ state, error, detail }) {
-  let preparing = text('正在准备本地语音，首次使用会下载音色模型…','Preparing local voice; first use downloads the voice model…');
+  let preparing = detail?.provider === 'minimax'
+    ? text('正在生成 MiniMax 语音…', 'Generating MiniMax speech…')
+    : text('正在准备本地语音，首次使用会下载音色模型…','Preparing local voice; first use downloads the voice model…');
   if (detail?.total) {
     const pct = Math.max(0, Math.min(100, Math.round(detail.loaded * 100 / detail.total)));
     preparing = detail.phase === 'inference'
@@ -133,10 +136,16 @@ function updateSpeechState({ state, error, detail }) {
 
 async function init() {
   repo = await openDatabase(); await repo.migrateLegacy(bookId => { try { return JSON.parse(localStorage.getItem(`reader_notes:${bookId}`)); } catch { return null; } });
-  const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 }; const provider = new HybridSpeechProvider();
-  speech = new SpeechController(provider, { preferences: prefs.voices || {}, rate: prefs.rate || 1, onState: updateSpeechState, onHighlight: item => { document.querySelectorAll('.unit').forEach(el => el.classList.toggle('playing', el.dataset.unit === item?.unitId)); }, onPreference: value => { void repo.put('preferences', { id: 'tts', ...value }); } });
+  const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 };
+  const savedEndpoint = localStorage.getItem('course-reader-minimax-endpoint') || '';
+  const savedSecret = localStorage.getItem('course-reader-minimax-relay-secret') || '';
+  const savedModel = localStorage.getItem('course-reader-minimax-model') || 'speech-2.8-turbo';
+  speechProvider = new HybridSpeechProvider(undefined, undefined, undefined);
+  speechProvider.setMinimaxEndpoint(savedEndpoint, savedSecret, savedModel);
+  speech = new SpeechController(speechProvider, { preferences: prefs.voices || {}, rate: prefs.rate || 1, onState: updateSpeechState, onHighlight: item => { document.querySelectorAll('.unit').forEach(el => el.classList.toggle('playing', el.dataset.unit === item?.unitId)); }, onPreference: value => { void repo.put('preferences', { id: 'tts', ...value }); } });
   translation = new TranslationController(repo, new BrowserTranslationProvider()); batcher = new BatchProcessor(repo, renderPdfPage);
-  provider.onVoicesChanged(loadVoices); $('rate').value = speech.rate; $('rateValue').value = `${speech.rate}×`; loadVoices(); await loadLibrary(); applyLanguage();
+  $('minimaxEndpoint').value = savedEndpoint; $('minimaxRelaySecret').value = savedSecret; $('minimaxModel').value = savedModel;
+  speechProvider.onVoicesChanged(loadVoices); $('rate').value = speech.rate; $('rateValue').value = `${speech.rate}×`; loadVoices(); await loadLibrary(); applyLanguage();
 }
 
 $('langZh').onclick = () => { uiLanguage = 'zh'; localStorage.setItem('course-reader-ui', uiLanguage); applyLanguage(); void loadLibrary(); };
@@ -147,6 +156,12 @@ $('saveText').onclick = async () => { try { const rawText = $('rawText').value; 
 $('prevPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('nextPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1); $('pageNumber').onchange = () => current?.type === 'pdf' && ensureAndShowPage(current, $('pageNumber').value);
 $('quickPrev').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('quickNext').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1);
 $('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateCurrent; $('showTranslation').onchange = renderContent;
+$('saveMinimax').onclick = () => {
+  const endpoint = $('minimaxEndpoint').value.trim(); const secret = $('minimaxRelaySecret').value; const model = $('minimaxModel').value;
+  localStorage.setItem('course-reader-minimax-endpoint', endpoint); localStorage.setItem('course-reader-minimax-relay-secret', secret); localStorage.setItem('course-reader-minimax-model', model);
+  speechProvider.setMinimaxEndpoint(endpoint, secret, model); loadVoices();
+  setStatus('minimaxStatus', endpoint ? text('MiniMax 音色已启用。','MiniMax voice enabled.') : text('已关闭 MiniMax，使用本机音色。','MiniMax disabled; using system voices.'));
+};
 $('addBookmark').onclick = async () => { if (!current) return; const pageNum = current.type === 'pdf' ? Number($('pageNumber').value) : Number(current.position?.unit || 0); const bookmarks = [...(current.bookmarks || []).filter(mark => mark.pageNum !== pageNum), { pageNum, name: $('bookmarkName').value.trim() || text(`第 ${pageNum} 页`,`Page ${pageNum}`) }].sort((a,b) => a.pageNum - b.pageNum); current = await repo.updateDocument({ ...current, bookmarks }); renderBookmarks(current); $('bookmarkName').value = ''; };
 $('play').onclick = () => { try { playCurrentReading(); } catch (error) { setStatus('speechStatus', error.message, true); } }; $('pause').onclick = () => speech.state === 'paused' ? speech.resume() : speech.pause(); $('stop').onclick = () => speech.stop(); $('rate').oninput = event => { const value = Number(event.target.value); $('rateValue').value = `${value.toFixed(2)}×`; speech.changeSettings({ rate: value }); }; $('voice').onchange = event => { const lang = languageOf(currentUnits.map(u => u.text).join('\n'), current?.sourceLanguage); speech.changeSettings({ language: lang, voiceURI: event.target.value }); };
 
