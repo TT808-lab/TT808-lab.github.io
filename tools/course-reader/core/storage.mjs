@@ -1,4 +1,4 @@
-import { hashBytes, pageNumber, paragraphs } from './model.mjs';
+import { hashBytes, pageNumber, paragraphs, randomId } from './model.mjs';
 
 export const DB_NAME = 'studyReaderDB';
 export const DB_VERSION = 3;
@@ -111,7 +111,7 @@ export class Repository {
         tx.objectStore('sourceBlobs').put({ documentId: existing.id, blob, sourceHash });
         return existing;
       }
-      const document = { id: crypto.randomUUID(), title, type: 'pdf', totalPages, anchor, sourceHash,
+      const document = { id: randomId(), title, type: 'pdf', totalPages, anchor, sourceHash,
         sourceLanguage: 'auto', createdAt: Date.now(), updatedAt: Date.now(), position: { page: anchor }, bookmarks: [] };
       docs.add(document);
       tx.objectStore('sourceBlobs').add({ documentId: document.id, blob, sourceHash });
@@ -121,7 +121,7 @@ export class Repository {
 
   async saveText({ title, rawText, sourceLanguage = 'auto' }) {
     if (!rawText.trim()) throw new Error('Text cannot be empty.');
-    const id = crypto.randomUUID();
+    const id = randomId();
     const document = { id, title, type: 'text', rawText, sourceLanguage, createdAt: Date.now(), updatedAt: Date.now(), bookmarks: [], position: { unit: 0 } };
     const blocks = paragraphs(rawText);
     return this.transaction(['documents', 'units'], 'readwrite', tx => {

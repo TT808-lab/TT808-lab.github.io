@@ -1,13 +1,21 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { batchForPage, nextBatch, pageNumber, paragraphs, sentences, translationKey } from '../tools/course-reader/core/model.mjs';
+import { batchForPage, hashBytes, nextBatch, pageNumber, paragraphs, randomId, sentences, translationKey } from '../tools/course-reader/core/model.mjs';
 import { openDatabase, request } from '../tools/course-reader/core/storage.mjs';
 import { BatchProcessor, verifyLegacySource } from '../tools/course-reader/core/batches.mjs';
 
 const document = { id: 'test', totalPages: 105, anchor: 17 };
 const open = () => openDatabase({ name: `test-${crypto.randomUUID()}` });
 const render = async (_blob, page) => ({ text: `Unique page ${page}`, image: new Blob([String(page)]) });
+
+test('hashing and document IDs work without secure-context crypto APIs', async () => {
+  const bytes = new TextEncoder().encode('abc');
+  assert.equal(await hashBytes(bytes, null), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  assert.equal(await hashBytes(bytes), await hashBytes(bytes, null));
+  const id = randomId({ getRandomValues(value) { value.fill(7); return value; } });
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
 
 test('30-page batches anchor at the chosen page; reverse access never changes anchor', () => {
   const ranges = [17, 47, 77].map(p => { const b = batchForPage(document, p); return [b.start, b.end]; });

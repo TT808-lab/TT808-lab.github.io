@@ -1,4 +1,4 @@
-import { batchForPage, hashBytes } from './model.mjs';
+import { batchForPage, hashBytes, randomId } from './model.mjs';
 
 export class BatchProcessor {
   constructor(repository, renderPage) {
@@ -14,7 +14,7 @@ export class BatchProcessor {
     return promise;
   }
   async run(document, batch, signal, { ocrPage = null } = {}) {
-    const owner = crypto.randomUUID();
+    const owner = randomId();
     const claim = await this.repository.claimBatch(batch, owner);
     if (claim.state !== 'claimed') return claim;
     try {
