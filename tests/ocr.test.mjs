@@ -10,7 +10,7 @@ test('OCR reports unavailable instead of pretending an image has no text', () =>
 test('OCR uses a local worker and returns versioned text', async () => {
   const calls = [];
   const worker = {
-    async recognize(image) { calls.push(image); return { data: { text: '本机识别结果' } }; },
+    async recognize(image) { calls.push(image); return { data: { text: '本 机 识别 结 果' } }; },
     async terminate() {}
   };
   const provider = new BrowserOcrProvider({ imageProcessing: true, tesseract: { createWorker: async (language, oem, options) => { assert.equal(language, 'chi_sim+eng'); options.logger({ status: 'recognizing text', progress: .5 }); return worker; } } });

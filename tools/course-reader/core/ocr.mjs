@@ -3,6 +3,9 @@ export const OCR_VERSION = 'tesseract-browser-v1';
 function languagePack(language) {
   return language === 'en' ? 'eng' : language === 'zh' ? 'chi_sim+eng' : 'chi_sim+eng';
 }
+function cleanOcrText(value) {
+  return String(value || '').replace(/(?<=[\p{Script=Han}])\s+(?=[\p{Script=Han}])/gu, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
 
 export class BrowserOcrProvider {
   constructor({ tesseract = globalThis.Tesseract, version = OCR_VERSION, imageProcessing = null } = {}) {
@@ -32,7 +35,7 @@ export class BrowserOcrProvider {
       if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError');
       const result = await worker.recognize(image);
       if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError');
-      const text = String(result?.data?.text || '').replace(/\u0000/g, '').trim();
+      const text = cleanOcrText(String(result?.data?.text || '').replace(/\u0000/g, ''));
       if (!text) throw new Error('OCR 完成，但没有识别出文字。');
       return { text, version: this.version };
     } finally { this.running = false; }
