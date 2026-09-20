@@ -2,7 +2,7 @@ import { openDatabase } from './core/storage.mjs';
 import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, paragraphs } from './core/model.mjs';
 import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
-import { HybridSpeechProvider, SpeechController, languageOf, speechItems } from './core/speech.mjs';
+import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs';
 import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
 
 // PDF.js ships a web worker for off-main-thread parsing. Without workerSrc,
@@ -36,6 +36,7 @@ function applyLanguage() {
 function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); }
 function setTab(tab) { $('pdfForm').classList.toggle('hidden', tab !== 'pdf'); $('textForm').classList.toggle('hidden', tab !== 'text'); $('pdfTab').classList.toggle('active', tab === 'pdf'); $('textTab').classList.toggle('active', tab === 'text'); }
 function syncQuickPager(doc, page) { const visible = doc?.type === 'pdf'; $('quickPager').classList.toggle('hidden', !visible); if (!visible) return; $('quickPage').textContent = `${page} / ${doc.totalPages}`; $('quickPrev').disabled = page <= 1; $('quickNext').disabled = page >= doc.totalPages; }
+function defaultMiniMaxEndpoint() { return location.port === '4179' ? `${location.origin}/api/minimax-tts` : ''; }
 
 async function renderPdfPage(blob, pageNum, signal, { ocr: runOcr = false, onProgress } = {}) {
   const abort = () => { if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError'); };
@@ -180,16 +181,21 @@ async function init() {
   repo = await openDatabase(); await repo.migrateLegacy(bookId => { try { return JSON.parse(localStorage.getItem(`reader_notes:${bookId}`)); } catch { return null; } });
   ocr = new BrowserOcrProvider();
   const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 };
-  const savedEndpoint = localStorage.getItem('course-reader-minimax-endpoint') || '';
+  const storedEndpoint = localStorage.getItem('course-reader-minimax-endpoint');
+  const automaticEndpoint = storedEndpoint === null ? defaultMiniMaxEndpoint() : '';
+  const savedEndpoint = storedEndpoint ?? automaticEndpoint;
   const savedSecret = localStorage.getItem('course-reader-minimax-relay-secret') || '';
   const savedModel = localStorage.getItem('course-reader-minimax-model') || 'speech-2.8-turbo';
+  if (automaticEndpoint) localStorage.setItem('course-reader-minimax-endpoint', automaticEndpoint);
   speechProvider = new HybridSpeechProvider(undefined, undefined, undefined);
   speechProvider.setMinimaxEndpoint(savedEndpoint, savedSecret, savedModel);
   speech = new SpeechController(speechProvider, { preferences: prefs.voices || {}, rate: prefs.rate || 1, onState: updateSpeechState, onHighlight: item => { document.querySelectorAll('.unit').forEach(el => el.classList.toggle('playing', el.dataset.unit === item?.unitId)); }, onPreference: value => { void repo.put('preferences', { id: 'tts', ...value }); } });
+  if (automaticEndpoint && !String(prefs.voices?.zh || '').startsWith('minimax:')) speech.changeSettings({ language: 'zh', voiceURI: MINIMAX_VOICES[0].voiceURI });
   translation = new TranslationController(repo, new BrowserTranslationProvider()); batcher = new BatchProcessor(repo, renderPdfPage);
   $('minimaxEndpoint').value = savedEndpoint; $('minimaxRelaySecret').value = savedSecret; $('minimaxModel').value = savedModel;
   speechProvider.onVoicesChanged(loadVoices); $('rate').value = speech.rate; $('rateValue').value = `${speech.rate}×`; loadVoices(); await loadLibrary(); applyLanguage();
   $('continuous').checked = localStorage.getItem('course-reader-continuous') !== '0';
+  if (automaticEndpoint) setStatus('minimaxStatus', text('已自动连接本机 MiniMax 音色。','Connected to the local MiniMax voice automatically.'));
 }
 
 $('langZh').onclick = () => { uiLanguage = 'zh'; localStorage.setItem('course-reader-ui', uiLanguage); applyLanguage(); void loadLibrary(); };
