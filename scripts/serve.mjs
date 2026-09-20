@@ -4,6 +4,7 @@ import path from 'node:path';
 const root = process.cwd();
 const port = Number(process.env.COURSE_READER_PORT || 4179);
 const minimaxKey = process.env.MINIMAX_API_KEY || '';
+const minimaxBaseUrl = (process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1').replace(/\/+$/, '');
 const minimaxModel = process.env.MINIMAX_MODEL || 'speech-2.8-turbo';
 const relaySecret = process.env.MINIMAX_RELAY_SECRET || '';
 const allowedOrigin = process.env.MINIMAX_ALLOWED_ORIGIN || '*';
@@ -45,7 +46,7 @@ async function handleMiniMax(req, res) {
     const voiceId = typeof body.voiceId === 'string' && /^[A-Za-z0-9_-]+$/.test(body.voiceId) ? body.voiceId : 'male-qn-qingse';
     const rate = Number(body.rate);
     const speed = Number.isFinite(rate) ? Math.max(.5, Math.min(2, rate)) : 1;
-    const upstream = await fetch('https://api.minimax.io/v1/t2a_v2', {
+    const upstream = await fetch(`${minimaxBaseUrl}/t2a_v2`, {
       method: 'POST', headers: { Authorization: `Bearer ${minimaxKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, text, stream: false, language_boost: body.language === 'zh' ? 'Chinese' : body.language === 'en' ? 'English' : 'auto', output_format: 'hex', voice_setting: { voice_id: voiceId, speed, vol: 1, pitch: 0 }, audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 } })
     });
