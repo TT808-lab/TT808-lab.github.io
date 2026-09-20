@@ -82,6 +82,23 @@ test('MiniMax provider sends only the current chunk and plays returned audio', a
   assert.equal(calls.length, 1); assert.equal(calls[0].body.text, '当前句子。'); assert.equal(calls[0].body.voiceId, 'male-qn-qingse'); assert.equal(calls[0].body.rate, 1.1); assert.equal(started, 1);
 });
 
+test('MiniMax default browser fetch keeps its required receiver', async () => {
+  const originalFetch = globalThis.fetch;
+  let receiver;
+  globalThis.fetch = function () { receiver = this; return Promise.resolve({ ok: true, blob: async () => new Blob([new Uint8Array([1])], { type: 'audio/mpeg' }) }); };
+  class Audio {
+    async play() { this.onplaying?.(); queueMicrotask(() => this.onended?.()); }
+    pause() {}
+  }
+  try {
+    const provider = new MiniMaxSpeechProvider({ endpoint: 'http://relay.test', AudioCtor: Audio, urlApi: { createObjectURL: () => 'blob:test', revokeObjectURL() {} } });
+    await provider.speak('测试。', { voice: provider.voices()[0], language: 'zh', rate: 1 });
+    assert.equal(receiver, globalThis);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('hybrid provider routes MiniMax voice without changing browser fallback', () => {
   const browser = new Provider(); const minimax = new MiniMaxSpeechProvider({ endpoint: 'http://relay.test' });
   const hybrid = new HybridSpeechProvider(browser, { voices: () => [], stop() {}, pause() {}, resume() {} }, minimax);

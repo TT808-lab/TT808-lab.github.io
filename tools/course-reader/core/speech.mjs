@@ -129,7 +129,7 @@ export class PiperSpeechProvider {
 }
 
 export class MiniMaxSpeechProvider {
-  constructor({ endpoint = '', model = 'speech-2.8-turbo', relaySecret = '', fetcher = globalThis.fetch, AudioCtor = globalThis.Audio, urlApi = globalThis.URL } = {}) {
+  constructor({ endpoint = '', model = 'speech-2.8-turbo', relaySecret = '', fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null, AudioCtor = globalThis.Audio, urlApi = globalThis.URL } = {}) {
     this.endpoint = endpoint; this.model = model; this.relaySecret = relaySecret;
     this.fetcher = fetcher; this.AudioCtor = AudioCtor; this.urlApi = urlApi;
     this.currentAudio = null; this.abortController = null; this.token = 0;
