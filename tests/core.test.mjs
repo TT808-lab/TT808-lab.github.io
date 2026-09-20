@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { batchForPage, hashBytes, nextBatch, pageNumber, paragraphs, randomId, sentences, translationKey } from '../tools/course-reader/core/model.mjs';
+import { batchForPage, hashBytes, nextBatch, normalizeReadingText, pageNumber, paragraphs, randomId, sentences, translationKey } from '../tools/course-reader/core/model.mjs';
 import { openDatabase, request } from '../tools/course-reader/core/storage.mjs';
 import { BatchProcessor, verifyLegacySource } from '../tools/course-reader/core/batches.mjs';
 
@@ -41,6 +41,13 @@ test('paragraphs preserve original offsets, CRLF, indentation and single newline
     assert.equal(sentences(value, lang).map(s => s.text).join(''), value);
   }
   assert.notEqual(translationKey('u', 'a', 'en', 'zh', '1'), translationKey('u', 'b', 'en', 'zh', '1'));
+});
+
+test('reading text joins visual wraps without merging headings or real sentence breaks', () => {
+  const chinese = '第3章 GEO实战四步法\n在前两章中，我们确立了GEO的核心认知：信息获取正从链接列表迁移\n至整合答案，企业\n的数字战略必须随之进化。本章将从“是什么”转向“如何做”的实战部\n署。我们不\n会讨论模糊的理念。\n本章的核心目标是提供一个完整的系统。';
+  assert.equal(normalizeReadingText(chinese), '第3章GEO实战四步法\n在前两章中，我们确立了GEO的核心认知：信息获取正从链接列表迁移至整合答案，企业的数字战略必须随之进化。本章将从“是什么”转向“如何做”的实战部署。我们不会讨论模糊的理念。\n本章的核心目标是提供一个完整的系统。');
+  assert.equal(normalizeReadingText('This is a para-\ngraph that wraps.\nNext sentence.'), 'This is a paragraph that wraps.\nNext sentence.');
+  assert.equal(normalizeReadingText('答 案 飞 轮。'), '答案飞轮。');
 });
 
 test('legacy migration is atomic, idempotent, preserves old data, notes and authority', async () => {

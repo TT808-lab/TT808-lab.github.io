@@ -1,6 +1,6 @@
 import { openDatabase } from './core/storage.mjs';
 import { BatchProcessor } from './core/batches.mjs';
-import { batchForPage, nextBatch, paragraphs } from './core/model.mjs';
+import { batchForPage, nextBatch, normalizeReadingText, paragraphs } from './core/model.mjs';
 import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
 import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs';
 import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
@@ -57,7 +57,7 @@ async function renderPdfPage(blob, pageNum, signal, { ocr: runOcr = false, onPro
     if (previousY !== null) extracted += Math.abs(y - previousY) > 4 ? '\n' : ' ';
     extracted += item.str || ''; previousY = y;
   }
-  const textValue = extracted.trim();
+  const textValue = normalizeReadingText(extracted);
   const meaningful = textValue.length >= 12 && /[\p{L}\p{N}\p{Script=Han}]/u.test(textValue);
   if (meaningful || !runOcr) return { image, text: meaningful ? textValue : '', extractionVersion: 'pdfjs-3-line-v1', textSource: meaningful ? 'pdfjs' : 'image', ocrStatus: meaningful ? 'skipped' : 'pending', ocrVersion: OCR_VERSION, ocrError: null };
   const capability = ocr.capability();
@@ -113,6 +113,8 @@ async function ensureAndShowPage(doc, page, { forceOcr = false } = {}) {
     const needsOcr = !pageData.text?.trim() && (forceOcr || ['pending', 'running', 'failed', 'cancelled'].includes(pageData.ocrStatus) || !pageData.ocrStatus);
     if (needsOcr) pageData = await ensureOcrForPage(doc, page, { force: forceOcr });
     if (!pageData) throw new Error(text('页面处理失败。','Page processing failed.'));
+    const normalizedText = normalizeReadingText(pageData.text || '');
+    if (normalizedText !== (pageData.text || '')) pageData = await repo.updatePage(doc.id, page, { text: normalizedText, normalizationVersion: 'reading-text-v1' });
     currentPdfPage = pageData; currentUnits = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || '' }];
     const sourceLanguage = currentUnits[0].text.trim() ? languageOf(currentUnits[0].text, doc.sourceLanguage) : null; $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en');
     if (sourceLanguage === 'en') { const cachedTranslation = await translation.readyText(currentUnits[0], 'en', 'zh'); if (cachedTranslation) currentTranslation.set(currentUnits[0].id, cachedTranslation); }

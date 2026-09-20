@@ -1,10 +1,12 @@
+import { normalizeReadingText } from './model.mjs';
+
 export const OCR_VERSION = 'tesseract-browser-v1';
 
 function languagePack(language) {
   return language === 'en' ? 'eng' : language === 'zh' ? 'chi_sim+eng' : 'chi_sim+eng';
 }
 function cleanOcrText(value) {
-  return String(value || '').replace(/(?<=[\p{Script=Han}])\s+(?=[\p{Script=Han}])/gu, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return normalizeReadingText(String(value || '').replace(/\u0000/g, ''));
 }
 
 export class BrowserOcrProvider {
@@ -35,7 +37,7 @@ export class BrowserOcrProvider {
       if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError');
       const result = await worker.recognize(image);
       if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError');
-      const text = cleanOcrText(String(result?.data?.text || '').replace(/\u0000/g, ''));
+      const text = cleanOcrText(result?.data?.text || '');
       if (!text) throw new Error('OCR 完成，但没有识别出文字。');
       return { text, version: this.version };
     } finally { this.running = false; }

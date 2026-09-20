@@ -94,6 +94,44 @@ export async function hashText(text) {
   return hashBytes(new TextEncoder().encode(text));
 }
 
+export function normalizeReadingText(value) {
+  const source = String(value || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n');
+  const lines = source.split('\n').map(line => line.trim());
+  const terminal = /[。！？.!?；;：:]\s*[”’」』】）》）\]]?$/u;
+  const heading = /^(?:第[一二三四五六七八九十百零〇\d]+[章节篇部]|chapter\b|part\b|前言|序言|引言|结语|总结|目录|附录|参考文献)/iu;
+  let result = ''; let previous = '';
+  for (const line of lines) {
+    if (!line) {
+      if (result && !result.endsWith('\n\n')) result = result.replace(/\n?$/, '\n\n');
+      previous = '';
+      continue;
+    }
+    if (!result || result.endsWith('\n\n')) result += line;
+    else if (terminal.test(previous) || heading.test(previous)) result += `\n${line}`;
+    else if (/-$/.test(previous) && /^[A-Za-z]/.test(line)) result = `${result.slice(0, -1)}${line}`;
+    else {
+      const left = previous.slice(-1), right = line[0];
+      const touchesCjk = /[\p{Script=Han}，。！？；：、（【《“‘]/u.test(left) || /[\p{Script=Han}，。！？；：、）】》”’]/u.test(right);
+      result += `${touchesCjk ? '' : ' '}${line}`;
+    }
+    previous = line;
+  }
+  let normalized = result;
+  let beforeSpacing;
+  do {
+    beforeSpacing = normalized;
+    normalized = normalized
+      .replace(/([\p{Script=Han}])[ \t]+([\p{Script=Han}])/gu, '$1$2')
+      .replace(/([\p{Script=Han}])[ \t]+([A-Za-z0-9])/gu, '$1$2')
+      .replace(/([A-Za-z0-9])[ \t]+([\p{Script=Han}])/gu, '$1$2');
+  } while (normalized !== beforeSpacing);
+  return normalized
+    .replace(/[ \t]+([，。！？；：、）】》”’])/gu, '$1')
+    .replace(/([（【《“‘])[ \t]+/gu, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function paragraphs(rawText) {
   // Keep raw text separately; offsets point into that exact string, including CRLF.
   const result = [];
