@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BrowserSpeechProvider, HybridSpeechProvider, MiniMaxSpeechProvider, SpeechController, speechItems } from '../tools/course-reader/core/speech.mjs';
+import { BrowserSpeechProvider, HybridSpeechProvider, MINIMAX_VOICES, MiniMaxSpeechProvider, SpeechController, speechItems } from '../tools/course-reader/core/speech.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const en = { voiceURI: 'en', lang: 'en-US', localService: true };
 const zh = { voiceURI: 'zh', lang: 'zh-CN', localService: true };
@@ -79,7 +79,16 @@ test('MiniMax provider sends only the current chunk and plays returned audio', a
   const provider = new MiniMaxSpeechProvider({ endpoint: 'http://relay.test/api/minimax-tts', fetcher, AudioCtor: Audio, urlApi });
   const voice = provider.voices()[0];
   await provider.speak('当前句子。', { voice, language: 'zh', rate: 1.1, onStart: () => started++ });
-  assert.equal(calls.length, 1); assert.equal(calls[0].body.text, '当前句子。'); assert.equal(calls[0].body.voiceId, 'male-qn-qingse'); assert.equal(calls[0].body.rate, 1.1); assert.equal(started, 1);
+  assert.equal(calls.length, 1); assert.equal(calls[0].body.text, '当前句子。'); assert.equal(calls[0].body.voiceId, 'audiobook_female_1'); assert.equal(calls[0].body.rate, 1.1); assert.equal(started, 1);
+});
+
+test('MiniMax exposes validated Chinese audiobook, female and male choices', () => {
+  assert.equal(MINIMAX_VOICES[0].voiceId, 'audiobook_female_1');
+  assert.ok(MINIMAX_VOICES.some(voice => voice.voiceId === 'audiobook_male_1'));
+  assert.ok(MINIMAX_VOICES.some(voice => voice.voiceId === 'female-tianmei'));
+  assert.ok(MINIMAX_VOICES.some(voice => voice.voiceId === 'male-qn-jingying'));
+  assert.equal(new Set(MINIMAX_VOICES.map(voice => voice.voiceURI)).size, MINIMAX_VOICES.length);
+  assert.ok(MINIMAX_VOICES.every(voice => voice.lang === 'zh-CN' && voice.provider === 'minimax'));
 });
 
 test('MiniMax default browser fetch keeps its required receiver', async () => {

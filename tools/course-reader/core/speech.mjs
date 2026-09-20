@@ -9,12 +9,16 @@ export const PIPER_VOICES = [
   { voiceURI: 'piper:en_US-kristin-medium', voiceId: 'en_US-kristin-medium', name: 'Piper Kristin English', lang: 'en-US' /* ~63 MB */ }
 ].map(voice => ({ ...voice, provider: 'piper', localService: true }));
 
-// MiniMax voice IDs are kept in the relay configuration rather than embedded
-// API credentials. The documented Chinese voice is a useful single default;
-// the relay can accept another voice ID later without changing the reader.
+// Built-in MiniMax voice IDs contain no credentials. Keep the audiobook voice
+// first so a new Chinese reader gets a voice intended for long-form listening.
 export const MINIMAX_VOICES = [
-  { voiceURI: 'minimax:male-qn-qingse', voiceId: 'male-qn-qingse', name: 'MiniMax 青涩中文', lang: 'zh-CN', provider: 'minimax', localService: false }
-];
+  { voiceId: 'audiobook_female_1', name: 'MiniMax 有声书女声（推荐）' },
+  { voiceId: 'audiobook_male_1', name: 'MiniMax 有声书男声' },
+  { voiceId: 'female-tianmei', name: 'MiniMax 甜美女声' },
+  { voiceId: 'female-chengshu', name: 'MiniMax 成熟女声' },
+  { voiceId: 'male-qn-jingying', name: 'MiniMax 精英男声' },
+  { voiceId: 'male-qn-qingse', name: 'MiniMax 青年男声' }
+].map(voice => ({ ...voice, voiceURI: `minimax:${voice.voiceId}`, lang: 'zh-CN', provider: 'minimax', localService: false }));
 
 export function languageOf(text, choice = 'auto') {
   if (choice === 'zh' || choice === 'en') return choice;
