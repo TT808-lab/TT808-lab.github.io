@@ -6,14 +6,14 @@ export class BatchProcessor {
     this.renderPage = renderPage;
     this.inflight = new Map();
   }
-  ensure(document, page, { signal } = {}) {
+  ensure(document, page, { signal, ocrPage = null } = {}) {
     const batch = batchForPage(document, page);
     if (this.inflight.has(batch.id)) return this.inflight.get(batch.id);
-    const promise = this.run(document, batch, signal).finally(() => this.inflight.delete(batch.id));
+    const promise = this.run(document, batch, signal, { ocrPage }).finally(() => this.inflight.delete(batch.id));
     this.inflight.set(batch.id, promise);
     return promise;
   }
-  async run(document, batch, signal) {
+  async run(document, batch, signal, { ocrPage = null } = {}) {
     const owner = crypto.randomUUID();
     const claim = await this.repository.claimBatch(batch, owner);
     if (claim.state !== 'claimed') return claim;
@@ -27,7 +27,7 @@ export class BatchProcessor {
           if (!source?.blob || !document.sourceHash) throw new Error('Original PDF required. Reconnect the source file.');
           if (await hashBytes(await source.blob.arrayBuffer()) !== document.sourceHash) throw new Error('Source PDF does not match this document.');
         }
-        const rendered = await this.renderPage(source.blob, page, signal);
+        const rendered = await this.renderPage(source.blob, page, signal, { ocr: page === ocrPage });
         signal?.throwIfAborted();
         await this.repository.commitPage(batch, owner, { ...rendered, pageNum: page });
       }

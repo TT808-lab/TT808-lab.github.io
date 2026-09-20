@@ -90,6 +90,14 @@ export class Repository {
   }
   countPages(id) { return this.transaction(['pageCache'], 'readonly', tx => request(tx.objectStore('pageCache').index('documentId').count(id))); }
   getPage(id, number) { return this.get('pageCache', `${id}:${number}`); }
+  updatePage(documentId, pageNum, patch) {
+    const id = `${documentId}:${pageNum}`;
+    return this.transaction(['pageCache'], 'readwrite', async tx => {
+      const store = tx.objectStore('pageCache'); const page = await request(store.get(id));
+      if (!page) throw new Error(`Page ${pageNum} is not cached.`);
+      store.put({ ...page, ...patch, id, documentId, pageNum }); return { ...page, ...patch, id, documentId, pageNum };
+    });
+  }
 
   async importPdf({ blob, title, totalPages, startPage }) {
     pageNumber(totalPages, undefined);

@@ -3,6 +3,7 @@ import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, paragraphs } from './core/model.mjs';
 import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
 import { HybridSpeechProvider, SpeechController, languageOf, speechItems } from './core/speech.mjs';
+import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
 
 // PDF.js ships a web worker for off-main-thread parsing. Without workerSrc,
 // large PDFs parse synchronously on the main thread and the import button
@@ -14,11 +15,12 @@ if (globalThis.pdfjsLib && !globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc) {
 const $ = id => document.getElementById(id);
 const text = (zh, en) => uiLanguage === 'zh' ? zh : en;
 let uiLanguage = localStorage.getItem('course-reader-ui') || 'zh';
-let repo, batcher, translation, speech, pdfDocument;
+let repo, batcher, translation, speech, pdfDocument, ocr;
 let speechProvider;
 let current = null, currentUnits = [], currentPdfPage = null, currentTranslation = new Map();
 let pdfSourceCache = new Map();
 let pageImageUrl = null;
+const ocrInFlight = new Map();
 
 function setStatus(id, message, error = false) { const el = $(id); el.textContent = message || ''; el.classList.toggle('error', error); }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -35,13 +37,15 @@ function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home')
 function setTab(tab) { $('pdfForm').classList.toggle('hidden', tab !== 'pdf'); $('textForm').classList.toggle('hidden', tab !== 'text'); $('pdfTab').classList.toggle('active', tab === 'pdf'); $('textTab').classList.toggle('active', tab === 'text'); }
 function syncQuickPager(doc, page) { const visible = doc?.type === 'pdf'; $('quickPager').classList.toggle('hidden', !visible); if (!visible) return; $('quickPage').textContent = `${page} / ${doc.totalPages}`; $('quickPrev').disabled = page <= 1; $('quickNext').disabled = page >= doc.totalPages; }
 
-async function renderPdfPage(blob, pageNum) {
+async function renderPdfPage(blob, pageNum, signal, { ocr: runOcr = false, onProgress } = {}) {
+  const abort = () => { if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError'); };
+  abort();
   const key = await blob.arrayBuffer();
   const cacheKey = `${blob.size}:${blob.lastModified || 0}`;
   let pdf = pdfSourceCache.get(cacheKey);
   if (!pdf) { pdf = await pdfjsLib.getDocument({ data: key }).promise; pdfSourceCache.set(cacheKey, pdf); }
   const page = await pdf.getPage(pageNum);
-  const viewport = page.getViewport({ scale: 1.25 });
+  const viewport = page.getViewport({ scale: runOcr ? 1.6 : 1.25 });
   const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
   await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
   const image = await new Promise((resolve, reject) => canvas.toBlob(blobValue => blobValue ? resolve(blobValue) : reject(new Error('Could not create page image.')), 'image/jpeg', .82));
@@ -52,7 +56,18 @@ async function renderPdfPage(blob, pageNum) {
     if (previousY !== null) extracted += Math.abs(y - previousY) > 4 ? '\n' : ' ';
     extracted += item.str || ''; previousY = y;
   }
-  return { image, text: extracted.trim(), extractionVersion: 'pdfjs-3-line-v1' };
+  const textValue = extracted.trim();
+  const meaningful = textValue.length >= 12 && /[\p{L}\p{N}\p{Script=Han}]/u.test(textValue);
+  if (meaningful || !runOcr) return { image, text: meaningful ? textValue : '', extractionVersion: 'pdfjs-3-line-v1', textSource: meaningful ? 'pdfjs' : 'image', ocrStatus: meaningful ? 'skipped' : 'pending', ocrVersion: OCR_VERSION, ocrError: null };
+  const capability = ocr.capability();
+  if (capability.state !== 'available') return { image, text: '', extractionVersion: 'pdfjs-3-line-v1', textSource: 'image', ocrStatus: 'unavailable', ocrVersion: OCR_VERSION, ocrError: capability.error };
+  try {
+    const result = await ocr.recognize(image, { language: 'auto', signal, onProgress });
+    return { image, text: result.text, extractionVersion: result.version, textSource: 'ocr', ocrStatus: 'ready', ocrVersion: result.version, ocrError: null };
+  } catch (error) {
+    const cancelled = error?.name === 'AbortError';
+    return { image, text: '', extractionVersion: 'pdfjs-3-line-v1', textSource: 'image', ocrStatus: cancelled ? 'cancelled' : 'failed', ocrVersion: OCR_VERSION, ocrError: error?.message || String(error) };
+  }
 }
 
 async function loadLibrary() {
@@ -64,22 +79,47 @@ async function loadLibrary() {
 
 async function preparePdfDocument(doc, page = doc.position?.page || doc.anchor || 1) {
   currentPdfPage = null; currentTranslation.clear();
+  $('ocrRetry').classList.add('hidden');
   $('readerTitle').textContent = doc.title; $('readerMeta').textContent = text(`PDF · 起始页 ${doc.anchor || 1} · 每批约 30 页`, `PDF · anchor ${doc.anchor || 1} · batches of about 30 pages`);
   $('pageNumber').value = page; $('pageTotal').textContent = `/ ${doc.totalPages}`; syncQuickPager(doc, page); $('showTranslation').checked = false;
   const next = nextBatch(doc, page); if (next) setStatus('pageStatus', text(`接近批次末尾时会准备第 ${next.start}–${next.end} 页。`, `Next batch ${next.start}–${next.end} will prepare near the end.`));
   await ensureAndShowPage(doc, page);
 }
-async function ensureAndShowPage(doc, page) {
+async function ensureOcrForPage(doc, page, { force = false } = {}) {
+  const key = `${doc.id}:${page}`;
+  if (ocrInFlight.has(key)) return ocrInFlight.get(key);
+  const promise = (async () => {
+    const cached = await repo.getPage(doc.id, page);
+    if (!cached) return null;
+    if (!force && cached.ocrStatus === 'ready') return cached;
+    await repo.updatePage(doc.id, page, { ocrStatus: 'running', ocrError: null, ocrVersion: OCR_VERSION });
+    setStatus('pageStatus', text(`正在本机识别第 ${page} 页…`, `Recognizing page ${page} locally…`));
+    const source = await repo.get('sourceBlobs', doc.id);
+    if (!source?.blob) throw new Error(text('原始 PDF 不在本机，无法进行 OCR。','The original PDF is unavailable locally for OCR.'));
+    const rendered = await renderPdfPage(source.blob, page, undefined, { ocr: true, onProgress: message => {
+      if (message?.status && Number.isFinite(message.progress)) setStatus('pageStatus', text(`正在本机识别第 ${page} 页… ${Math.round(message.progress * 100)}%`, `Recognizing page ${page} locally… ${Math.round(message.progress * 100)}%`));
+    } });
+    return repo.updatePage(doc.id, page, rendered);
+  })().finally(() => ocrInFlight.delete(key));
+  ocrInFlight.set(key, promise); return promise;
+}
+async function ensureAndShowPage(doc, page, { forceOcr = false } = {}) {
   page = Math.min(doc.totalPages, Math.max(1, Number(page) || 1)); $('pageNumber').value = page; syncQuickPager(doc, page);
   try {
     const cached = await repo.getPage(doc.id, page);
-    if (!cached) { setStatus('pageStatus', text('正在处理这一批页面…','Preparing this batch…')); await batcher.ensure(doc, page); }
-    const pageData = await repo.getPage(doc.id, page); if (!pageData) throw new Error(text('页面处理失败。','Page processing failed.'));
+    if (!cached) { setStatus('pageStatus', text('正在处理这一批页面…','Preparing this batch…')); await batcher.ensure(doc, page, { ocrPage: page }); }
+    let pageData = await repo.getPage(doc.id, page); if (!pageData) throw new Error(text('页面处理失败。','Page processing failed.'));
+    const needsOcr = !pageData.text?.trim() && (forceOcr || ['pending', 'running', 'failed', 'cancelled'].includes(pageData.ocrStatus) || !pageData.ocrStatus);
+    if (needsOcr) pageData = await ensureOcrForPage(doc, page, { force: forceOcr });
+    if (!pageData) throw new Error(text('页面处理失败。','Page processing failed.'));
     currentPdfPage = pageData; currentUnits = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || '' }];
     const sourceLanguage = currentUnits[0].text.trim() ? languageOf(currentUnits[0].text, doc.sourceLanguage) : null; $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en');
     if (sourceLanguage === 'en') { const cachedTranslation = await translation.readyText(currentUnits[0], 'en', 'zh'); if (cachedTranslation) currentTranslation.set(currentUnits[0].id, cachedTranslation); }
     const b = batchForPage(doc, page); const n = nextBatch(doc, page);
-    setStatus('pageStatus', text(`第 ${page} 页 · 当前批次 ${b.start}–${b.end}${n ? ` · 下一批 ${n.start}–${n.end}` : ''}`, `Page ${page} · batch ${b.start}–${b.end}${n ? ` · next ${n.start}–${n.end}` : ''}`));
+    const pageLabel = text(`第 ${page} 页 · 当前批次 ${b.start}–${b.end}${n ? ` · 下一批 ${n.start}–${n.end}` : ''}`, `Page ${page} · batch ${b.start}–${b.end}${n ? ` · next ${n.start}–${n.end}` : ''}`);
+    const ocrLabel = pageData.ocrStatus === 'failed' ? text(`本页 OCR 失败：${pageData.ocrError || '未知错误'}`, `OCR failed: ${pageData.ocrError || 'unknown error'}`) : pageData.ocrStatus === 'unavailable' ? text(`本机 OCR 不可用：${pageData.ocrError || '请检查浏览器'}`, `Local OCR unavailable: ${pageData.ocrError || 'check the browser'}`) : pageData.ocrStatus === 'cancelled' ? text('本页 OCR 已取消，可点击重试。','OCR was cancelled; retry is available.') : pageLabel;
+    setStatus('pageStatus', ocrLabel, ['failed', 'unavailable', 'cancelled'].includes(pageData.ocrStatus));
+    $('ocrRetry').classList.toggle('hidden', !['failed', 'unavailable', 'cancelled'].includes(pageData.ocrStatus));
     $('pageProgress').style.width = `${page / doc.totalPages * 100}%`; await repo.updateDocument({ ...doc, position: { page }, updatedAt: Date.now() }); renderContent(); renderBookmarks(doc); loadVoices();
     if (n && page >= b.end - 4) void batcher.ensure(doc, n.start).catch(error => setStatus('pageStatus', error.message, true));
   } catch (error) { setStatus('pageStatus', error.message, true); }
@@ -87,13 +127,15 @@ async function ensureAndShowPage(doc, page) {
 
 async function prepareTextDocument(doc) {
   syncQuickPager(null, 0);
+  $('ocrRetry').classList.add('hidden');
   currentPdfPage = null; currentTranslation.clear(); currentUnits = await repo.getUnits(doc.id); const sourceLanguage = languageOf(doc.rawText, doc.sourceLanguage); for (const unit of currentUnits) { const cachedTranslation = sourceLanguage === 'en' ? await translation.readyText(unit, 'en', 'zh') : null; if (cachedTranslation) currentTranslation.set(unit.id, cachedTranslation); } $('readerTitle').textContent = doc.title; $('readerMeta').textContent = text(`${currentUnits.length} 个原始段落 · 翻译默认关闭`, `${currentUnits.length} original paragraphs · translation is off by default`); $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en'); $('showTranslation').checked = false; renderContent(); const savedUnit = currentUnits.find(unit => unit.order === doc.position?.unit); if (savedUnit) document.querySelector(`[data-unit="${CSS.escape(savedUnit.id)}"]`)?.scrollIntoView({ block: 'center' }); renderBookmarks(doc); speech.stop(); loadVoices();
 }
 function renderContent() {
   const show = $('showTranslation').checked; const lang = languageOf(currentUnits.map(u => u.text).join('\n'), current?.sourceLanguage); const hasText = currentUnits.some(unit => unit.text.trim());
   if (pageImageUrl) { URL.revokeObjectURL(pageImageUrl); pageImageUrl = null; }
   const image = currentPdfPage?.image && !hasText ? (pageImageUrl = URL.createObjectURL(currentPdfPage.image), `<img src="${pageImageUrl}" alt="${text('PDF 图片页','PDF image page')}" style="display:block;width:100%;max-height:68vh;object-fit:contain;border-radius:8px;margin-bottom:12px">`) : '';
-  const body = hasText ? currentUnits.map(unit => { const translated = currentTranslation.get(unit.id); return `<div class="unit" data-unit="${escapeHtml(unit.id)}"><div class="page-text">${escapeHtml(unit.text)}</div>${show && translated ? `<div class="translation">${escapeHtml(translated)}</div>` : ''}</div>`; }).join('') : `<div class="hint">${text('这是图片页，没有可提取文字，暂时不能朗读。请翻到下一页。','This is an image-only page, so there is no text to read aloud. Turn to the next page.')}</div>`;
+  const emptyMessage = currentPdfPage?.ocrStatus === 'failed' ? text('本页本机文字识别失败，请点击“重试 OCR”。','Local OCR failed for this page. Click “Retry OCR”.') : currentPdfPage?.ocrStatus === 'unavailable' ? text('本机 OCR 不可用，未上传页面内容。请检查浏览器后重试。','Local OCR is unavailable. The page was not uploaded. Check the browser and retry.') : text('这是图片页，正在等待本机文字识别。','This is an image page waiting for local OCR.');
+  const body = hasText ? currentUnits.map(unit => { const translated = currentTranslation.get(unit.id); return `<div class="unit" data-unit="${escapeHtml(unit.id)}"><div class="page-text">${escapeHtml(unit.text)}</div>${show && translated ? `<div class="translation">${escapeHtml(translated)}</div>` : ''}</div>`; }).join('') : `<div class="hint">${emptyMessage}</div>`;
   $('content').innerHTML = image + body;
   document.querySelectorAll('[data-unit]').forEach(el => el.onclick = async () => { const unit = currentUnits.find(u => u.id === el.dataset.unit); if (unit) { current = await repo.updateDocument({ ...current, position: { unit: unit.order } }); const translatedUnit = { ...unit, translation: currentTranslation.get(unit.id) }; const translated = show && currentTranslation.has(unit.id); speech.play(speechItems([translatedUnit], translated ? 'zh' : lang, translated), { next: null }); } });
 }
@@ -136,6 +178,7 @@ function updateSpeechState({ state, error, detail }) {
 
 async function init() {
   repo = await openDatabase(); await repo.migrateLegacy(bookId => { try { return JSON.parse(localStorage.getItem(`reader_notes:${bookId}`)); } catch { return null; } });
+  ocr = new BrowserOcrProvider();
   const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 };
   const savedEndpoint = localStorage.getItem('course-reader-minimax-endpoint') || '';
   const savedSecret = localStorage.getItem('course-reader-minimax-relay-secret') || '';
@@ -155,6 +198,7 @@ $('importPdf').onclick = async () => { const file = $('pdfFile').files[0]; if (!
 $('saveText').onclick = async () => { try { const rawText = $('rawText').value; current = await repo.saveText({ title: $('textTitle').value.trim() || text('粘贴文字','Pasted text'), rawText, sourceLanguage: $('textLanguage').value }); await openDocument(current.id); } catch (error) { setStatus('textStatus', error.message, true); } };
 $('prevPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('nextPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1); $('pageNumber').onchange = () => current?.type === 'pdf' && ensureAndShowPage(current, $('pageNumber').value);
 $('quickPrev').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('quickNext').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1);
+$('ocrRetry').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value), { forceOcr: true });
 $('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateCurrent; $('showTranslation').onchange = renderContent;
 $('saveMinimax').onclick = () => {
   const endpoint = $('minimaxEndpoint').value.trim(); const secret = $('minimaxRelaySecret').value; const model = $('minimaxModel').value;
