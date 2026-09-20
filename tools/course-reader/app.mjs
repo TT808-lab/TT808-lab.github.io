@@ -33,7 +33,7 @@ function applyLanguage() {
     if (current.type === 'pdf' && currentPdfPage) { const page = current.position?.page || current.anchor || 1; const batch = batchForPage(current, page); setStatus('pageStatus', text(`第 ${page} 页 · 当前批次 ${batch.start}–${batch.end}`, `Page ${page} · batch ${batch.start}–${batch.end}`)); renderContent(); }
   }
 }
-function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); }
+function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); $('playerDeck').classList.toggle('hidden', name !== 'reader'); }
 function setTab(tab) { $('pdfForm').classList.toggle('hidden', tab !== 'pdf'); $('textForm').classList.toggle('hidden', tab !== 'text'); $('pdfTab').classList.toggle('active', tab === 'pdf'); $('textTab').classList.toggle('active', tab === 'text'); }
 function syncQuickPager(doc, page) { const visible = doc?.type === 'pdf'; $('quickPager').classList.toggle('hidden', !visible); if (!visible) return; $('quickPage').textContent = `${page} / ${doc.totalPages}`; $('quickPrev').disabled = page <= 1; $('quickNext').disabled = page >= doc.totalPages; }
 function defaultMiniMaxEndpoint() { return location.port === '4179' ? `${location.origin}/api/minimax-tts` : ''; }
@@ -182,8 +182,8 @@ async function init() {
   ocr = new BrowserOcrProvider();
   const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 };
   const storedEndpoint = localStorage.getItem('course-reader-minimax-endpoint');
-  const automaticEndpoint = storedEndpoint === null ? defaultMiniMaxEndpoint() : '';
-  const savedEndpoint = storedEndpoint ?? automaticEndpoint;
+  const automaticEndpoint = !String(storedEndpoint || '').trim() ? defaultMiniMaxEndpoint() : '';
+  const savedEndpoint = String(storedEndpoint || '').trim() || automaticEndpoint;
   const savedSecret = localStorage.getItem('course-reader-minimax-relay-secret') || '';
   const savedModel = localStorage.getItem('course-reader-minimax-model') || 'speech-2.8-turbo';
   if (automaticEndpoint) localStorage.setItem('course-reader-minimax-endpoint', automaticEndpoint);
@@ -193,6 +193,7 @@ async function init() {
   if (automaticEndpoint && !String(prefs.voices?.zh || '').startsWith('minimax:')) speech.changeSettings({ language: 'zh', voiceURI: MINIMAX_VOICES[0].voiceURI });
   translation = new TranslationController(repo, new BrowserTranslationProvider()); batcher = new BatchProcessor(repo, renderPdfPage);
   $('minimaxEndpoint').value = savedEndpoint; $('minimaxRelaySecret').value = savedSecret; $('minimaxModel').value = savedModel;
+  $('minimaxAdvanced').open = !automaticEndpoint;
   speechProvider.onVoicesChanged(loadVoices); $('rate').value = speech.rate; $('rateValue').value = `${speech.rate}×`; loadVoices(); await loadLibrary(); applyLanguage();
   $('continuous').checked = localStorage.getItem('course-reader-continuous') !== '0';
   if (automaticEndpoint) setStatus('minimaxStatus', text('已自动连接本机 MiniMax 音色。','Connected to the local MiniMax voice automatically.'));
