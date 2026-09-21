@@ -2,7 +2,15 @@ import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../tools/course-reader/core/storage.mjs';
-import { TranslationController, splitChunks, BrowserTranslationProvider } from '../tools/course-reader/core/translation.mjs';
+import { TranslationController, splitChunks, BrowserTranslationProvider, translationsComplete } from '../tools/course-reader/core/translation.mjs';
+
+test('translation is complete only when every current unit has nonblank text', () => {
+  const units = [{ id: 'first' }, { id: 'second' }];
+  assert.equal(translationsComplete(units, new Map()), false);
+  assert.equal(translationsComplete(units, new Map([['first', '译文'], ['second', '   ']])), false);
+  assert.equal(translationsComplete(units, new Map([['first', '译文'], ['second', '续文']])), true);
+  assert.equal(translationsComplete([], new Map()), false);
+});
 
 test('long Unicode text splits losslessly and never bisects surrogate pairs', () => {
   const text = 'A long paragraph. 你好😀\r\n'.repeat(200);

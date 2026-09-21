@@ -1,7 +1,7 @@
 import { openDatabase } from './core/storage.mjs';
 import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, normalizeReadingText, paragraphs } from './core/model.mjs';
-import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
+import { BrowserTranslationProvider, TranslationController, translationsComplete } from './core/translation.mjs';
 import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs';
 import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
 
@@ -128,7 +128,7 @@ async function ensureAndShowPage(doc, page, { forceOcr = false } = {}) {
     if (!pageData) throw new Error(text('页面处理失败。','Page processing failed.'));
     const normalizedText = normalizeReadingText(pageData.text || '');
     if (normalizedText !== (pageData.text || '')) pageData = await repo.updatePage(doc.id, page, { text: normalizedText, normalizationVersion: 'reading-text-v1' });
-    currentPdfPage = pageData; currentUnits = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || '' }];
+    currentPdfPage = pageData; currentUnits = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || '' }]; currentTranslation = new Map();
     const sourceLanguage = currentUnits[0].text.trim() ? languageOf(currentUnits[0].text, doc.sourceLanguage) : null; $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en');
     if (sourceLanguage === 'en') { const cachedTranslation = await translation.readyText(currentUnits[0], 'en', 'zh'); if (cachedTranslation) currentTranslation.set(currentUnits[0].id, cachedTranslation); }
     const b = batchForPage(doc, page); const n = nextBatch(doc, page);
@@ -158,26 +158,68 @@ function renderContent() {
 function renderBookmarks(doc) { $('bookmarks').innerHTML = (doc.bookmarks || []).length ? doc.bookmarks.map((mark, i) => `<div class="bookmark"><span>${escapeHtml(mark.name)} · ${mark.pageNum}</span><button class="btn fit" data-bookmark="${i}">${text('打开','Open')}</button></div>`).join('') : `<div class="hint">${text('还没有书签。','No bookmarks yet.')}</div>`; $('bookmarks').querySelectorAll('[data-bookmark]').forEach(btn => btn.onclick = () => doc.type === 'pdf' ? ensureAndShowPage(doc, doc.bookmarks[Number(btn.dataset.bookmark)].pageNum) : null); }
 async function openDocument(id) { current = await repo.getDocument(id); if (!current) return; if (current.type === 'pdf' && !current.totalPages) current = { ...current, totalPages: current.cachedMax || 1 }; setScreen('reader'); if (current.type === 'pdf') await preparePdfDocument(current); else await prepareTextDocument(current); }
 
+async function translateCurrentUnits({ automatic = false } = {}) {
+  if (translationsComplete(currentUnits, currentTranslation)) {
+    $('showTranslation').checked = true; renderContent(); loadVoices(); return { failed: [] };
+  }
+  if (automatic) setStatus('translationStatus', text(`正在自动翻译第 ${$('pageNumber').value} 页…`, `Automatically translating page ${$('pageNumber').value}…`));
+  const results = await translation.translateAll(currentUnits, 'en', 'zh', { onState: record => { if (record.status === 'failed') setStatus('translationStatus', record.error, true); } });
+  currentTranslation = new Map(); const failed = [];
+  for (const result of results) { if (result.status === 'ready') currentTranslation.set(result.unitId, result.text); else failed.push(result); }
+  $('retryBtn').classList.toggle('hidden', failed.length === 0);
+  $('showTranslation').checked = failed.length === 0;
+  const readyMessage = automatic
+    ? text(`第 ${$('pageNumber').value} 页翻译完成，继续朗读。`, `Page ${$('pageNumber').value} translated; continuing playback.`)
+    : text('翻译完成，原文仍保留；连续播放会自动翻译下一页。','Translation ready; the original remains, and continuous playback will translate the next page automatically.');
+  setStatus('translationStatus', failed.length ? text(`${failed.length} 段失败，可重试。`, `${failed.length} part(s) failed; retry is available.`) : readyMessage, failed.length > 0);
+  renderContent(); loadVoices();
+  return { failed };
+}
+
 async function translateCurrent() {
   const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { setStatus('translationStatus', text('此页没有可翻译的文字。','This page has no text to translate.'), true); return; }
   const source = languageOf(sourceText, current.sourceLanguage); if (source !== 'en') return;
   const button = $('translateBtn'); button.disabled = true; setStatus('translationStatus', text('点击后准备本机翻译模型…','Preparing the local translation model…'));
   try {
     await translation.provider.prepare('en', 'zh', loaded => setStatus('translationStatus', `${text('下载翻译模型','Downloading translation model')} ${Math.round(loaded * 100)}%`));
-    const results = await translation.translateAll(currentUnits, 'en', 'zh', { onState: record => { if (record.status === 'failed') setStatus('translationStatus', record.error, true); } });
-    currentTranslation = new Map(); const failed = [];
-    for (const result of results) { if (result.status === 'ready') currentTranslation.set(result.unitId, result.text); else failed.push(result); }
-    $('retryBtn').classList.toggle('hidden', failed.length === 0); $('showTranslation').checked = failed.length === 0; setStatus('translationStatus', failed.length ? text(`${failed.length} 段失败，可重试。`,` ${failed.length} part(s) failed; retry is available.`) : text('翻译完成，原文仍保留。','Translation ready; original text is retained.')); renderContent();
+    await translateCurrentUnits();
   } catch (error) { setStatus('translationStatus', error.message, true); } finally { button.disabled = false; }
 }
 
-function currentSpeechQueue() { const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { setStatus('speechStatus', text('图片页没有可朗读文字。','This image-only page has no text to read.'), true); return []; } const lang = languageOf(sourceText, current?.sourceLanguage); const translated = $('showTranslation').checked && currentTranslation.size; const units = currentUnits.map(unit => ({ ...unit, translation: currentTranslation.get(unit.id) })); return speechItems(units, translated ? 'zh' : lang, Boolean(translated)); }
-function playCurrentReading() {
-  const queue = currentSpeechQueue(); if (!queue.length) return;
-  if (current?.type !== 'pdf') { speech.play(queue); return; }
-  speech.play(queue, { next: async () => { if (!$('continuous').checked) return null; const nextPage = Number($('pageNumber').value) + 1; if (nextPage > current.totalPages) return null; await ensureAndShowPage(current, nextPage); return currentSpeechQueue(); } });
+function translatedReadingActive() { return $('showTranslation').checked && translationsComplete(currentUnits, currentTranslation); }
+function currentReadingLanguage() {
+  const sourceText = currentUnits.map(u => u.text).join('\n');
+  return translatedReadingActive() ? 'zh' : languageOf(sourceText, current?.sourceLanguage);
 }
-function loadVoices() { const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { $('voice').innerHTML = `<option>${text('图片页无可用音色','No voice needed for an image-only page')}</option>`; return; } const lang = languageOf(sourceText, current?.sourceLanguage); const voices = speech.voices(lang); $('voice').innerHTML = voices.length ? voices.map(v => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})${v.provider === 'minimax' ? ' · MiniMax' : v.localService ? ' · Local' : ''}</option>`).join('') : `<option>${text('未检测到匹配的本机音色','No matching local voice')}</option>`; const selected = speech.voice(lang); if (selected) $('voice').value = selected.voiceURI; }
+function currentSpeechQueue({ translated = translatedReadingActive() } = {}) {
+  const sourceText = currentUnits.map(u => u.text).join('\n');
+  if (!sourceText.trim()) { setStatus('speechStatus', text('图片页没有可朗读文字。','This image-only page has no text to read.'), true); return []; }
+  if (translated && !translationsComplete(currentUnits, currentTranslation)) throw new Error(text('本页译文尚未准备完成。','The translation for this page is not ready.'));
+  const lang = languageOf(sourceText, current?.sourceLanguage);
+  const units = currentUnits.map(unit => ({ ...unit, translation: currentTranslation.get(unit.id) }));
+  return speechItems(units, translated ? 'zh' : lang, translated);
+}
+function playCurrentReading() {
+  const translated = translatedReadingActive();
+  const queue = currentSpeechQueue({ translated }); if (!queue.length) return;
+  if (current?.type !== 'pdf') { speech.play(queue); return; }
+  const translationPreparation = translated && $('continuous').checked
+    ? translation.provider.prepare('en', 'zh', loaded => setStatus('translationStatus', `${text('下载翻译模型','Downloading translation model')} ${Math.round(loaded * 100)}%`)).then(() => null, error => error)
+    : null;
+  speech.play(queue, { next: async () => {
+    if (!$('continuous').checked) return null;
+    const nextPage = Number($('pageNumber').value) + 1; if (nextPage > current.totalPages) return null;
+    await ensureAndShowPage(current, nextPage);
+    if (currentUnits[0]?.order !== nextPage) throw new Error(text(`第 ${nextPage} 页加载失败。`, `Page ${nextPage} failed to load.`));
+    if (translated && !translationsComplete(currentUnits, currentTranslation)) {
+      const preparationError = await translationPreparation; if (preparationError) throw preparationError;
+      const result = await translateCurrentUnits({ automatic: true });
+      if (result.failed.length) throw new Error(text(`第 ${nextPage} 页翻译失败，请重试。`, `Page ${nextPage} translation failed; retry it.`));
+    }
+    return currentSpeechQueue({ translated });
+  } });
+}
+function loadVoices() { const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { $('voice').innerHTML = `<option>${text('图片页无可用音色','No voice needed for an image-only page')}</option>`; return; } const lang = currentReadingLanguage(); const voices = speech.voices(lang); $('voice').innerHTML = voices.length ? voices.map(v => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})${v.provider === 'minimax' ? ' · MiniMax' : v.localService ? ' · Local' : ''}</option>`).join('') : `<option>${text('未检测到匹配的本机音色','No matching local voice')}</option>`; const selected = speech.voice(lang); if (selected) $('voice').value = selected.voiceURI; }
 function updateSpeechState({ state, error, detail }) {
   let preparing = detail?.provider === 'minimax'
     ? text('正在生成 MiniMax 语音…', 'Generating MiniMax speech…')
@@ -225,7 +267,7 @@ $('saveText').onclick = async () => { try { const rawText = $('rawText').value; 
 $('prevPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('nextPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1); $('pageNumber').onchange = () => current?.type === 'pdf' && ensureAndShowPage(current, $('pageNumber').value);
 $('quickPrev').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('quickNext').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1);
 $('ocrRetry').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value), { forceOcr: true });
-$('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateCurrent; $('showTranslation').onchange = renderContent;
+$('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateCurrent; $('showTranslation').onchange = () => { renderContent(); loadVoices(); };
 $('saveMinimax').onclick = () => {
   const endpoint = $('minimaxEndpoint').value.trim(); const secret = $('minimaxRelaySecret').value; const model = $('minimaxModel').value;
   localStorage.setItem('course-reader-minimax-endpoint', endpoint); localStorage.setItem('course-reader-minimax-relay-secret', secret); localStorage.setItem('course-reader-minimax-model', model);
@@ -233,7 +275,7 @@ $('saveMinimax').onclick = () => {
   setStatus('minimaxStatus', ready ? text('MiniMax 音色已启用。','MiniMax voice enabled.') : endpoint ? text('请填写中转密钥。','Enter the relay authorization.' ) : text('已关闭 MiniMax，使用本机音色。','MiniMax disabled; using system voices.'), Boolean(endpoint && !ready));
 };
 $('addBookmark').onclick = async () => { if (!current) return; const pageNum = current.type === 'pdf' ? Number($('pageNumber').value) : Number(current.position?.unit || 0); const bookmarks = [...(current.bookmarks || []).filter(mark => mark.pageNum !== pageNum), { pageNum, name: $('bookmarkName').value.trim() || text(`第 ${pageNum} 页`,`Page ${pageNum}`) }].sort((a,b) => a.pageNum - b.pageNum); current = await repo.updateDocument({ ...current, bookmarks }); renderBookmarks(current); $('bookmarkName').value = ''; };
-$('play').onclick = () => { try { playCurrentReading(); } catch (error) { setStatus('speechStatus', error.message, true); } }; $('pause').onclick = () => speech.state === 'paused' ? speech.resume() : speech.pause(); $('stop').onclick = () => speech.stop(); $('rate').oninput = event => { const value = Number(event.target.value); $('rateValue').value = `${value.toFixed(2)}×`; speech.changeSettings({ rate: value }); }; $('voice').onchange = event => { const lang = languageOf(currentUnits.map(u => u.text).join('\n'), current?.sourceLanguage); speech.changeSettings({ language: lang, voiceURI: event.target.value }); };
+$('play').onclick = () => { try { playCurrentReading(); } catch (error) { setStatus('speechStatus', error.message, true); } }; $('pause').onclick = () => speech.state === 'paused' ? speech.resume() : speech.pause(); $('stop').onclick = () => speech.stop(); $('rate').oninput = event => { const value = Number(event.target.value); $('rateValue').value = `${value.toFixed(2)}×`; speech.changeSettings({ rate: value }); }; $('voice').onchange = event => speech.changeSettings({ language: currentReadingLanguage(), voiceURI: event.target.value });
 $('continuous').onchange = event => localStorage.setItem('course-reader-continuous', event.target.checked ? '1' : '0');
 
 init().catch(error => { setStatus('pdfStatus', error.message, true); setStatus('textStatus', error.message, true); });
