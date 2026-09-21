@@ -1,12 +1,5 @@
 import { hashText, translationKey } from './model.mjs';
 
-export function translationsComplete(units, translations) {
-  return units.length > 0 && units.every(unit => {
-    const value = translations.get(unit.id);
-    return typeof value === 'string' && Boolean(value.trim());
-  });
-}
-
 export function splitChunks(text, limit = 1200) {
   if (!Number.isInteger(limit) || limit < 2) throw new RangeError('Invalid chunk limit.');
   const points = Array.from(text);

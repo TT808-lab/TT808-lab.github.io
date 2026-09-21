@@ -1,7 +1,7 @@
 import { openDatabase } from './core/storage.mjs';
 import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, normalizeReadingText, paragraphs } from './core/model.mjs';
-import { BrowserTranslationProvider, TranslationController, translationsComplete } from './core/translation.mjs';
+import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
 import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs';
 import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
 
@@ -157,6 +157,13 @@ function renderContent() {
 }
 function renderBookmarks(doc) { $('bookmarks').innerHTML = (doc.bookmarks || []).length ? doc.bookmarks.map((mark, i) => `<div class="bookmark"><span>${escapeHtml(mark.name)} · ${mark.pageNum}</span><button class="btn fit" data-bookmark="${i}">${text('打开','Open')}</button></div>`).join('') : `<div class="hint">${text('还没有书签。','No bookmarks yet.')}</div>`; $('bookmarks').querySelectorAll('[data-bookmark]').forEach(btn => btn.onclick = () => doc.type === 'pdf' ? ensureAndShowPage(doc, doc.bookmarks[Number(btn.dataset.bookmark)].pageNum) : null); }
 async function openDocument(id) { current = await repo.getDocument(id); if (!current) return; if (current.type === 'pdf' && !current.totalPages) current = { ...current, totalPages: current.cachedMax || 1 }; setScreen('reader'); if (current.type === 'pdf') await preparePdfDocument(current); else await prepareTextDocument(current); }
+
+function translationsComplete(units, translations) {
+  return units.length > 0 && units.every(unit => {
+    const value = translations.get(unit.id);
+    return typeof value === 'string' && Boolean(value.trim());
+  });
+}
 
 async function translateCurrentUnits({ automatic = false } = {}) {
   if (translationsComplete(currentUnits, currentTranslation)) {
