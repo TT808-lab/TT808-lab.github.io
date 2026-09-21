@@ -2,3 +2,5 @@ node_modules/
 .local-backups/
 test-results/
 playwright-report/
+
+.vercel

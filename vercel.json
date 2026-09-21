@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/minimax-tts.mjs": {
+      "maxDuration": 30
+    }
+  }
+}

@@ -21,6 +21,7 @@ let current = null, currentUnits = [], currentPdfPage = null, currentTranslation
 let pdfSourceCache = new Map();
 let pageImageUrl = null;
 const ocrInFlight = new Map();
+const PUBLIC_MINIMAX_ENDPOINT = 'https://tt808-course-reader-relay.vercel.app/api/minimax-tts';
 
 function setStatus(id, message, error = false) { const el = $(id); el.textContent = message || ''; el.classList.toggle('error', error); }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -36,7 +37,19 @@ function applyLanguage() {
 function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); $('playerDeck').classList.toggle('hidden', name !== 'reader'); }
 function setTab(tab) { $('pdfForm').classList.toggle('hidden', tab !== 'pdf'); $('textForm').classList.toggle('hidden', tab !== 'text'); $('pdfTab').classList.toggle('active', tab === 'pdf'); $('textTab').classList.toggle('active', tab === 'text'); }
 function syncQuickPager(doc, page) { const visible = doc?.type === 'pdf'; $('quickPager').classList.toggle('hidden', !visible); if (!visible) return; $('quickPage').textContent = `${page} / ${doc.totalPages}`; $('quickPrev').disabled = page <= 1; $('quickNext').disabled = page >= doc.totalPages; }
-function defaultMiniMaxEndpoint() { return location.port === '4179' ? `${location.origin}/api/minimax-tts` : ''; }
+function defaultMiniMaxEndpoint() {
+  if (location.port === '4179') return `${location.origin}/api/minimax-tts`;
+  return location.hostname === 'tt808-lab.github.io' ? PUBLIC_MINIMAX_ENDPOINT : '';
+}
+function applyMiniMaxSetupLink() {
+  const url = new URL(location.href); const secret = url.searchParams.get('minimax_setup');
+  if (!secret || secret.length < 16 || location.hostname !== 'tt808-lab.github.io') return false;
+  localStorage.setItem('course-reader-minimax-endpoint', PUBLIC_MINIMAX_ENDPOINT);
+  localStorage.setItem('course-reader-minimax-relay-secret', secret);
+  url.searchParams.delete('minimax_setup'); history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  return true;
+}
+function miniMaxEndpointIsReady(endpoint, secret) { return endpoint !== PUBLIC_MINIMAX_ENDPOINT || Boolean(secret); }
 
 async function renderPdfPage(blob, pageNum, signal, { ocr: runOcr = false, onProgress } = {}) {
   const abort = () => { if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError'); };
@@ -182,6 +195,7 @@ function updateSpeechState({ state, error, detail }) {
 async function init() {
   repo = await openDatabase(); await repo.migrateLegacy(bookId => { try { return JSON.parse(localStorage.getItem(`reader_notes:${bookId}`)); } catch { return null; } });
   ocr = new BrowserOcrProvider();
+  const configuredByLink = applyMiniMaxSetupLink();
   const prefs = await repo.getPreference('tts') || { id: 'tts', voices: {}, rate: 1 };
   const storedEndpoint = localStorage.getItem('course-reader-minimax-endpoint');
   const automaticEndpoint = !String(storedEndpoint || '').trim() ? defaultMiniMaxEndpoint() : '';
@@ -189,16 +203,18 @@ async function init() {
   const savedSecret = localStorage.getItem('course-reader-minimax-relay-secret') || '';
   const savedModel = localStorage.getItem('course-reader-minimax-model') || 'speech-2.8-turbo';
   if (automaticEndpoint) localStorage.setItem('course-reader-minimax-endpoint', automaticEndpoint);
+  const minimaxReady = Boolean(savedEndpoint && miniMaxEndpointIsReady(savedEndpoint, savedSecret));
   speechProvider = new HybridSpeechProvider(undefined, undefined, undefined);
-  speechProvider.setMinimaxEndpoint(savedEndpoint, savedSecret, savedModel);
+  speechProvider.setMinimaxEndpoint(minimaxReady ? savedEndpoint : '', savedSecret, savedModel);
   speech = new SpeechController(speechProvider, { preferences: prefs.voices || {}, rate: prefs.rate || 1, onState: updateSpeechState, onHighlight: item => { document.querySelectorAll('.unit').forEach(el => el.classList.toggle('playing', el.dataset.unit === item?.unitId)); }, onPreference: value => { void repo.put('preferences', { id: 'tts', ...value }); } });
-  if (automaticEndpoint && !String(prefs.voices?.zh || '').startsWith('minimax:')) speech.changeSettings({ language: 'zh', voiceURI: MINIMAX_VOICES[0].voiceURI });
+  if ((automaticEndpoint || configuredByLink) && minimaxReady && !String(prefs.voices?.zh || '').startsWith('minimax:')) speech.changeSettings({ language: 'zh', voiceURI: MINIMAX_VOICES[0].voiceURI });
   translation = new TranslationController(repo, new BrowserTranslationProvider()); batcher = new BatchProcessor(repo, renderPdfPage);
   $('minimaxEndpoint').value = savedEndpoint; $('minimaxRelaySecret').value = savedSecret; $('minimaxModel').value = savedModel;
-  $('minimaxAdvanced').open = !automaticEndpoint;
+  $('minimaxAdvanced').open = !minimaxReady;
   speechProvider.onVoicesChanged(loadVoices); $('rate').value = speech.rate; $('rateValue').value = `${speech.rate}×`; loadVoices(); await loadLibrary(); applyLanguage();
   $('continuous').checked = localStorage.getItem('course-reader-continuous') !== '0';
-  if (automaticEndpoint) setStatus('minimaxStatus', text('已自动连接本机 MiniMax 音色。','Connected to the local MiniMax voice automatically.'));
+  if (minimaxReady) setStatus('minimaxStatus', savedEndpoint === PUBLIC_MINIMAX_ENDPOINT ? text('已连接 MiniMax 在线音色。','Connected to MiniMax online voices.') : text('已自动连接本机 MiniMax 音色。','Connected to the local MiniMax voice automatically.'));
+  else if (savedEndpoint === PUBLIC_MINIMAX_ENDPOINT) setStatus('minimaxStatus', text('MiniMax 在线音色需要授权，请使用专属设置链接。','MiniMax online voices require authorization; use the private setup link.'), true);
 }
 
 $('langZh').onclick = () => { uiLanguage = 'zh'; localStorage.setItem('course-reader-ui', uiLanguage); applyLanguage(); void loadLibrary(); };
@@ -213,8 +229,8 @@ $('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateC
 $('saveMinimax').onclick = () => {
   const endpoint = $('minimaxEndpoint').value.trim(); const secret = $('minimaxRelaySecret').value; const model = $('minimaxModel').value;
   localStorage.setItem('course-reader-minimax-endpoint', endpoint); localStorage.setItem('course-reader-minimax-relay-secret', secret); localStorage.setItem('course-reader-minimax-model', model);
-  speechProvider.setMinimaxEndpoint(endpoint, secret, model); loadVoices();
-  setStatus('minimaxStatus', endpoint ? text('MiniMax 音色已启用。','MiniMax voice enabled.') : text('已关闭 MiniMax，使用本机音色。','MiniMax disabled; using system voices.'));
+  const ready = Boolean(endpoint && miniMaxEndpointIsReady(endpoint, secret)); speechProvider.setMinimaxEndpoint(ready ? endpoint : '', secret, model); loadVoices();
+  setStatus('minimaxStatus', ready ? text('MiniMax 音色已启用。','MiniMax voice enabled.') : endpoint ? text('请填写中转密钥。','Enter the relay authorization.' ) : text('已关闭 MiniMax，使用本机音色。','MiniMax disabled; using system voices.'), Boolean(endpoint && !ready));
 };
 $('addBookmark').onclick = async () => { if (!current) return; const pageNum = current.type === 'pdf' ? Number($('pageNumber').value) : Number(current.position?.unit || 0); const bookmarks = [...(current.bookmarks || []).filter(mark => mark.pageNum !== pageNum), { pageNum, name: $('bookmarkName').value.trim() || text(`第 ${pageNum} 页`,`Page ${pageNum}`) }].sort((a,b) => a.pageNum - b.pageNum); current = await repo.updateDocument({ ...current, bookmarks }); renderBookmarks(current); $('bookmarkName').value = ''; };
 $('play').onclick = () => { try { playCurrentReading(); } catch (error) { setStatus('speechStatus', error.message, true); } }; $('pause').onclick = () => speech.state === 'paused' ? speech.resume() : speech.pause(); $('stop').onclick = () => speech.stop(); $('rate').oninput = event => { const value = Number(event.target.value); $('rateValue').value = `${value.toFixed(2)}×`; speech.changeSettings({ rate: value }); }; $('voice').onchange = event => { const lang = languageOf(currentUnits.map(u => u.text).join('\n'), current?.sourceLanguage); speech.changeSettings({ language: lang, voiceURI: event.target.value }); };
