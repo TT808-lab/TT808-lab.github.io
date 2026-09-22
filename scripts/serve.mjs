@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { createTranslationHandler } from '../api/minimax-translate.mjs';
 const root = process.cwd();
 const port = Number(process.env.COURSE_READER_PORT || 4179);
 const minimaxKey = process.env.MINIMAX_API_KEY || '';
@@ -64,6 +65,12 @@ async function handleMiniMax(req, res) {
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/api/minimax-translate') {
+      const handler = createTranslationHandler({ env: { ...process.env, MINIMAX_ALLOWED_ORIGIN: allowedOrigin === '*' ? `http://${req.headers.host}` : allowedOrigin } });
+      req.body = req.method === 'POST' ? await readJson(req) : {};
+      const adapter = { setHeader: (key, value) => res.setHeader(key, value), status(code) { res.statusCode = code; return this; }, json(body) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); }, end() { res.end(); } };
+      return await handler(req, adapter);
+    }
     if (url.pathname === '/api/minimax-tts') return await handleMiniMax(req, res);
     const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '');
     if (relative.split('/').some(p => p.startsWith('.'))) throw Error('Forbidden');

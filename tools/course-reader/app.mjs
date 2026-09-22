@@ -1,7 +1,7 @@
-import { openDatabase } from './core/storage.mjs';
+import { openDatabase } from './core/storage.mjs?v=20260922-1';
 import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, normalizeReadingText, paragraphs } from './core/model.mjs';
-import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
+import { BrowserTranslationProvider, OnlineTranslationProvider, TranslationController } from './core/translation.mjs?v=20260922-1';
 import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs?v=20260921-5';
 import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
 
@@ -17,6 +17,8 @@ const text = (zh, en) => uiLanguage === 'zh' ? zh : en;
 let uiLanguage = localStorage.getItem('course-reader-ui') || 'zh';
 let repo, batcher, translation, speech, pdfDocument, ocr;
 let speechProvider;
+let translationAbort = null, viewRevision = 0;
+const localTranslation = new BrowserTranslationProvider();
 let current = null, currentUnits = [], currentPdfPage = null, currentTranslation = new Map();
 let pdfSourceCache = new Map();
 let pageImageUrl = null;
@@ -59,6 +61,29 @@ function applyMiniMaxSetupLink() {
   return true;
 }
 function miniMaxEndpointIsReady(endpoint, secret) { return endpoint !== PUBLIC_MINIMAX_ENDPOINT || Boolean(secret); }
+
+function updateTranslationTools() {
+  const online = $('translationMode').value === 'online';
+  $('onlineConsentLabel').classList.toggle('hidden', !online);
+  const scope = current?.type === 'pdf' ? text('只翻译当前页。', 'Only the current page is translated.') : text('按原始段落依次翻译当前粘贴文本。', 'The pasted text is translated in paragraph order.');
+  $('translationCapability').textContent = online
+    ? text('在线翻译仅在勾选同意并点击翻译后开始。', 'Online translation starts only after consent and a Translate click.') + scope
+    : localTranslation.api ? text('使用浏览器本机翻译，首次可能下载模型。', 'Uses the browser translator; a model download may be needed.') + scope
+      : text('此浏览器不支持本机翻译。请选 MiniMax 在线翻译并勾选同意；已有译文仍可阅读。', 'This browser has no on-device translator. Select MiniMax online and give consent; cached translations remain readable.');
+}
+function selectTranslationProvider() {
+  if ($('translationMode').value === 'local') { translation.provider = localTranslation; return; }
+  const endpoint = localStorage.getItem('course-reader-minimax-endpoint') || defaultMiniMaxEndpoint();
+  translation.provider = new OnlineTranslationProvider({
+    endpoint: endpoint?.endsWith('/api/minimax-tts') ? endpoint.replace(/minimax-tts$/, 'minimax-translate') : '',
+    secret: localStorage.getItem('course-reader-minimax-relay-secret') || '', consent: $('onlineConsent').checked
+  });
+}
+function cancelTranslation() {
+  translationAbort?.abort(); translationAbort = null;
+  $('translateBtn').disabled = false; $('retryBtn').disabled = false;
+  $('translationMode').disabled = false; $('cancelTranslation').classList.add('hidden');
+}
 
 async function renderPdfPage(blob, pageNum, signal, { ocr: runOcr = false, onProgress } = {}) {
   const abort = () => { if (signal?.aborted) throw new DOMException('OCR cancelled.', 'AbortError'); };
@@ -127,6 +152,8 @@ async function ensureOcrForPage(doc, page, { force = false } = {}) {
   ocrInFlight.set(key, promise); return promise;
 }
 async function ensureAndShowPage(doc, page, { forceOcr = false } = {}) {
+  cancelTranslation(); const revision = ++viewRevision;
+  setStatus('translationStatus', ''); $('retryBtn').classList.add('hidden');
   page = Math.min(doc.totalPages, Math.max(1, Number(page) || 1)); $('pageNumber').value = page; syncQuickPager(doc, page);
   try {
     const cached = await repo.getPage(doc.id, page);
@@ -135,19 +162,29 @@ async function ensureAndShowPage(doc, page, { forceOcr = false } = {}) {
     const needsOcr = !pageData.text?.trim() && (forceOcr || ['pending', 'running', 'failed', 'cancelled'].includes(pageData.ocrStatus) || !pageData.ocrStatus);
     if (needsOcr) pageData = await ensureOcrForPage(doc, page, { force: forceOcr });
     if (!pageData) throw new Error(text('页面处理失败。','Page processing failed.'));
+    if (revision !== viewRevision || current?.id !== doc.id) return;
     const normalizedText = normalizeReadingText(pageData.text || '');
     if (normalizedText !== (pageData.text || '')) pageData = await repo.updatePage(doc.id, page, { text: normalizedText, normalizationVersion: 'reading-text-v1' });
-    currentPdfPage = pageData; currentUnits = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || '' }]; currentTranslation = new Map();
-    const sourceLanguage = currentUnits[0].text.trim() ? languageOf(currentUnits[0].text, doc.sourceLanguage) : null; $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en');
-    if (sourceLanguage === 'en') { const cachedTranslation = await translation.readyText(currentUnits[0], 'en', 'zh'); if (cachedTranslation) currentTranslation.set(currentUnits[0].id, cachedTranslation); }
+    const units = [{ id: `${doc.id}:page:${page}`, documentId: doc.id, order: page, text: pageData.text || '' }];
+    const sourceLanguage = units[0].text.trim() ? languageOf(units[0].text, doc.sourceLanguage) : null;
+    const cachedTranslation = sourceLanguage === 'en' ? await translation.readyText(units[0], 'en', 'zh') : null;
+    if (revision !== viewRevision || current?.id !== doc.id) return;
+    currentPdfPage = pageData; currentUnits = units; currentTranslation = new Map();
+    $('translateBtn').classList.toggle('hidden', sourceLanguage !== 'en');
+    if (cachedTranslation) currentTranslation.set(units[0].id, cachedTranslation);
     const b = batchForPage(doc, page); const n = nextBatch(doc, page);
     const pageLabel = text(`第 ${page} 页 · 当前批次 ${b.start}–${b.end}${n ? ` · 下一批 ${n.start}–${n.end}` : ''}`, `Page ${page} · batch ${b.start}–${b.end}${n ? ` · next ${n.start}–${n.end}` : ''}`);
     const ocrLabel = pageData.ocrStatus === 'failed' ? text(`本页 OCR 失败：${pageData.ocrError || '未知错误'}`, `OCR failed: ${pageData.ocrError || 'unknown error'}`) : pageData.ocrStatus === 'unavailable' ? text(`本机 OCR 不可用：${pageData.ocrError || '请检查浏览器'}`, `Local OCR unavailable: ${pageData.ocrError || 'check the browser'}`) : pageData.ocrStatus === 'cancelled' ? text('本页 OCR 已取消，可点击重试。','OCR was cancelled; retry is available.') : pageLabel;
     setStatus('pageStatus', ocrLabel, ['failed', 'unavailable', 'cancelled'].includes(pageData.ocrStatus));
     $('ocrRetry').classList.toggle('hidden', !['failed', 'unavailable', 'cancelled'].includes(pageData.ocrStatus));
-    $('pageProgress').style.width = `${page / doc.totalPages * 100}%`; await repo.updateDocument({ ...doc, position: { page }, updatedAt: Date.now() }); renderContent(); renderBookmarks(doc); loadVoices();
+    if (revision !== viewRevision || current?.id !== doc.id) return;
+    $('pageProgress').style.width = `${page / doc.totalPages * 100}%`;
+    current = { ...current, position: { page }, updatedAt: Date.now() };
+    await repo.updateDocument(current);
+    if (revision !== viewRevision || current?.id !== doc.id) return;
+    renderContent(); renderBookmarks(current); loadVoices(); updateTranslationTools();
     if (n && page >= b.end - 4) void batcher.ensure(doc, n.start).catch(error => setStatus('pageStatus', error.message, true));
-  } catch (error) { setStatus('pageStatus', error.message, true); }
+  } catch (error) { if (revision === viewRevision) setStatus('pageStatus', error.message, true); }
 }
 
 async function prepareTextDocument(doc) {
@@ -162,10 +199,41 @@ function renderContent() {
   const emptyMessage = currentPdfPage?.ocrStatus === 'failed' ? text('本页本机文字识别失败，请点击“重试 OCR”。','Local OCR failed for this page. Click “Retry OCR”.') : currentPdfPage?.ocrStatus === 'unavailable' ? text('本机 OCR 不可用，未上传页面内容。请检查浏览器后重试。','Local OCR is unavailable. The page was not uploaded. Check the browser and retry.') : text('这是图片页，正在等待本机文字识别。','This is an image page waiting for local OCR.');
   const body = hasText ? currentUnits.map(unit => { const translated = currentTranslation.get(unit.id); return `<div class="unit" data-unit="${escapeHtml(unit.id)}"><div class="page-text">${escapeHtml(unit.text)}</div>${show && translated ? `<div class="translation">${escapeHtml(translated)}</div>` : ''}</div>`; }).join('') : `<div class="hint">${emptyMessage}</div>`;
   $('content').innerHTML = image + body;
-  document.querySelectorAll('[data-unit]').forEach(el => el.onclick = async () => { const unit = currentUnits.find(u => u.id === el.dataset.unit); if (unit) { current = await repo.updateDocument({ ...current, position: { unit: unit.order } }); const translatedUnit = { ...unit, translation: currentTranslation.get(unit.id) }; const translated = show && currentTranslation.has(unit.id); const speechLanguage = translated ? 'zh' : lang; const groupSentences = speech.voice(speechLanguage)?.provider === 'minimax'; speech.play(speechItems([translatedUnit], speechLanguage, translated, { groupSentences }), { next: null }); } });
+  $('translationTools').classList.toggle('hidden', lang !== 'en' || !hasText);
+  document.querySelector('.pager').classList.toggle('hidden', current?.type !== 'pdf');
+  $('pageProgress').parentElement.classList.toggle('hidden', current?.type !== 'pdf');
+  $('translateNext').parentElement.classList.toggle('hidden', current?.type !== 'pdf');
+  $('continuous').parentElement.classList.toggle('hidden', current?.type !== 'pdf');
+  $('readChinese').disabled = !translationsComplete(currentUnits, currentTranslation);
+  $('readChinese').classList.toggle('hidden', lang !== 'en');
+  $('readOriginal').disabled = !hasText;
+  document.querySelectorAll('[data-unit]').forEach(el => el.onclick = () => {
+    const unit = currentUnits.find(u => u.id === el.dataset.unit);
+    if (!unit) return;
+    const updated = { ...current, position: current.type === 'pdf' ? { page: unit.order } : { unit: unit.order } };
+    current = updated; void repo.updateDocument(updated);
+    try { playCurrentReading({ fromUnit: unit.id }); } catch (error) { setStatus('speechStatus', error.message, true); }
+  });
 }
-function renderBookmarks(doc) { $('bookmarks').innerHTML = (doc.bookmarks || []).length ? doc.bookmarks.map((mark, i) => `<div class="bookmark"><span>${escapeHtml(mark.name)} · ${mark.pageNum}</span><button class="btn fit" data-bookmark="${i}">${text('打开','Open')}</button></div>`).join('') : `<div class="hint">${text('还没有书签。','No bookmarks yet.')}</div>`; $('bookmarks').querySelectorAll('[data-bookmark]').forEach(btn => btn.onclick = () => doc.type === 'pdf' ? ensureAndShowPage(doc, doc.bookmarks[Number(btn.dataset.bookmark)].pageNum) : null); }
-async function openDocument(id) { current = await repo.getDocument(id); if (!current) return; if (current.type === 'pdf' && !current.totalPages) current = { ...current, totalPages: current.cachedMax || 1 }; setScreen('reader'); if (current.type === 'pdf') await preparePdfDocument(current); else await prepareTextDocument(current); }
+function renderBookmarks(doc) {
+  $('bookmarks').innerHTML = (doc.bookmarks || []).length ? doc.bookmarks.map((mark, i) => `<div class="bookmark"><span>${escapeHtml(mark.name)} · ${mark.pageNum}</span><button class="btn fit" data-bookmark="${i}">${text('打开','Open')}</button></div>`).join('') : `<div class="hint">${text('还没有书签。','No bookmarks yet.')}</div>`;
+  $('bookmarks').querySelectorAll('[data-bookmark]').forEach(btn => btn.onclick = () => {
+    const mark = doc.bookmarks[Number(btn.dataset.bookmark)];
+    if (doc.type === 'pdf') { speech.stop(); return ensureAndShowPage(current, mark.pageNum); }
+    const unit = currentUnits.find(value => value.order === mark.pageNum);
+    if (unit) document.querySelector(`[data-unit="${CSS.escape(unit.id)}"]`)?.scrollIntoView({ block: 'center' });
+  });
+}
+async function openDocument(id) {
+  speech.stop(); cancelTranslation(); viewRevision++;
+  $('onlineConsent').checked = false; $('translateNext').checked = false;
+  $('translationTools').open = true;
+  setStatus('translationStatus', ''); $('retryBtn').classList.add('hidden');
+  current = await repo.getDocument(id); if (!current) return;
+  if (current.type === 'pdf' && !current.totalPages) current = { ...current, totalPages: current.cachedMax || 1 };
+  setScreen('reader'); if (current.type === 'pdf') await preparePdfDocument(current); else await prepareTextDocument(current);
+  updateTranslationTools();
+}
 
 function translationsComplete(units, translations) {
   return units.length > 0 && units.every(unit => {
@@ -178,16 +246,26 @@ async function translateCurrentUnits({ automatic = false } = {}) {
   if (translationsComplete(currentUnits, currentTranslation)) {
     $('showTranslation').checked = true; renderContent(); loadVoices(); return { failed: [] };
   }
-  if (automatic) setStatus('translationStatus', text(`正在自动翻译第 ${$('pageNumber').value} 页…`, `Automatically translating page ${$('pageNumber').value}…`));
-  const results = await translation.translateAll(currentUnits, 'en', 'zh', { onState: record => { if (record.status === 'failed') setStatus('translationStatus', record.error, true); } });
-  currentTranslation = new Map(); const failed = [];
-  for (const result of results) { if (result.status === 'ready') currentTranslation.set(result.unitId, result.text); else failed.push(result); }
+  const revision = viewRevision;
+  const abort = translationAbort || (translationAbort = new AbortController());
+  $('translateBtn').disabled = true; $('retryBtn').disabled = true; $('translationMode').disabled = true;
+  $('cancelTranslation').classList.remove('hidden');
+  const units = currentUnits.filter(unit => !currentTranslation.has(unit.id));
+  const total = currentUnits.length;
+  const results = await translation.translateAll(units, 'en', 'zh', { signal: abort.signal, onState: record => {
+    if (revision !== viewRevision || abort.signal.aborted) return;
+    if (record.status === 'ready') { currentTranslation.set(record.unitId, record.text); $('showTranslation').checked = true; renderContent(); }
+    setStatus('translationStatus', text(`已翻译 ${currentTranslation.size}/${total} 段…`, `Translated ${currentTranslation.size}/${total} paragraphs…`));
+  } });
+  if (revision !== viewRevision || abort.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+  const failed = results.filter(result => result.status !== 'ready');
   $('retryBtn').classList.toggle('hidden', failed.length === 0);
-  $('showTranslation').checked = failed.length === 0;
+  $('showTranslation').checked = currentTranslation.size > 0;
+  if (!failed.length) $('translationTools').open = false;
   const readyMessage = automatic
     ? text(`第 ${$('pageNumber').value} 页翻译完成，继续朗读。`, `Page ${$('pageNumber').value} translated; continuing playback.`)
-    : text('翻译完成，原文仍保留；连续播放会自动翻译下一页。','Translation ready; the original remains, and continuous playback will translate the next page automatically.');
-  setStatus('translationStatus', failed.length ? text(`${failed.length} 段失败，可重试。`, `${failed.length} part(s) failed; retry is available.`) : readyMessage, failed.length > 0);
+    : text('翻译完成并已保存。点击“朗读中文译文”即可收听。','Translation saved. Click “Read Chinese translation” to listen.');
+  setStatus('translationStatus', failed.length ? text(`${failed.length} 段失败，可重试。${failed[0].error || ''}`, `${failed.length} part(s) failed; retry is available. ${failed[0].error || ''}`) : readyMessage, failed.length > 0);
   renderContent(); loadVoices();
   return { failed };
 }
@@ -195,11 +273,29 @@ async function translateCurrentUnits({ automatic = false } = {}) {
 async function translateCurrent() {
   const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { setStatus('translationStatus', text('此页没有可翻译的文字。','This page has no text to translate.'), true); return; }
   const source = languageOf(sourceText, current.sourceLanguage); if (source !== 'en') return;
-  const button = $('translateBtn'); button.disabled = true; setStatus('translationStatus', text('点击后准备本机翻译模型…','Preparing the local translation model…'));
+  if (translationAbort) return;
+  speech.stop();
+  if (translationsComplete(currentUnits, currentTranslation)) {
+    $('translationTools').open = false;
+    $('showTranslation').checked = true; renderContent(); loadVoices();
+    setStatus('translationStatus', text('已读取本机保存的译文，无需重新翻译。', 'Loaded saved translation; no new request needed.')); return;
+  }
+  selectTranslationProvider();
+  const revision = viewRevision; const abort = new AbortController(); translationAbort = abort;
+  $('translateBtn').disabled = true; $('retryBtn').disabled = true; $('translationMode').disabled = true; $('cancelTranslation').classList.remove('hidden');
+  setStatus('translationStatus', $('translationMode').value === 'online' ? text('正在准备在线翻译…', 'Preparing online translation…') : text('正在准备本机翻译模型…','Preparing the local translation model…'));
   try {
-    await translation.provider.prepare('en', 'zh', loaded => setStatus('translationStatus', `${text('下载翻译模型','Downloading translation model')} ${Math.round(loaded * 100)}%`));
+    await translation.provider.prepare('en', 'zh', loaded => { if (revision === viewRevision && !abort.signal.aborted) setStatus('translationStatus', `${text('下载翻译模型','Downloading translation model')} ${Math.round(loaded * 100)}%`); });
+    abort.signal.throwIfAborted();
     await translateCurrentUnits();
-  } catch (error) { setStatus('translationStatus', error.message, true); } finally { button.disabled = false; }
+  } catch (error) {
+    if (revision === viewRevision && (!translationAbort || translationAbort === abort)) {
+      const message = error.code === 'LOCAL_TRANSLATION_UNAVAILABLE'
+        ? text('此浏览器不支持本机翻译。请选择 MiniMax 在线翻译并勾选同意。', 'This browser has no on-device translator. Select MiniMax online and give consent.')
+        : abort.signal.aborted ? text('翻译已取消；已完成的段落已保存。', 'Translation cancelled; completed paragraphs are saved.') : error.message;
+      setStatus('translationStatus', message, !abort.signal.aborted); $('retryBtn').classList.remove('hidden');
+    }
+  } finally { if (translationAbort === abort) cancelTranslation(); }
 }
 
 function translatedReadingActive() { return $('showTranslation').checked && translationsComplete(currentUnits, currentTranslation); }
@@ -217,21 +313,34 @@ function currentSpeechQueue({ translated = translatedReadingActive() } = {}) {
   const groupSentences = speech.voice(speechLanguage)?.provider === 'minimax';
   return speechItems(units, speechLanguage, translated, { groupSentences });
 }
-function playCurrentReading() {
+function playCurrentReading({ fromUnit } = {}) {
+  if (translationAbort) { setStatus('speechStatus', text('请等待翻译完成，或先取消翻译。', 'Wait for translation or cancel it first.'), true); return; }
+  if ($('showTranslation').checked && !translationsComplete(currentUnits, currentTranslation)) throw new Error(text('译文未完成，请重试失败部分或选择“朗读原文”。', 'Translation is incomplete. Retry failed parts or choose Read original.'));
   const translated = translatedReadingActive();
-  const queue = currentSpeechQueue({ translated }); if (!queue.length) return;
+  let queue = currentSpeechQueue({ translated }); if (!queue.length) return;
+  if (fromUnit) { const index = queue.findIndex(item => item.unitId === fromUnit); if (index >= 0) queue = queue.slice(index); }
   if (current?.type !== 'pdf') { speech.play(queue); return; }
-  const translationPreparation = translated && $('continuous').checked
+  selectTranslationProvider();
+  const readingDocument = current.id;
+  const translationPreparation = translated && $('continuous').checked && $('translateNext').checked
     ? translation.provider.prepare('en', 'zh', loaded => setStatus('translationStatus', `${text('下载翻译模型','Downloading translation model')} ${Math.round(loaded * 100)}%`)).then(() => null, error => error)
     : null;
   speech.play(queue, { next: async () => {
+    const playbackToken = speech.token;
     if (!$('continuous').checked) return null;
+    if (current?.id !== readingDocument) return null;
     const nextPage = Number($('pageNumber').value) + 1; if (nextPage > current.totalPages) return null;
     await ensureAndShowPage(current, nextPage);
+    if (playbackToken !== speech.token || current?.id !== readingDocument) return null;
     if (currentUnits[0]?.order !== nextPage) throw new Error(text(`第 ${nextPage} 页加载失败。`, `Page ${nextPage} failed to load.`));
     if (translated && !translationsComplete(currentUnits, currentTranslation)) {
+      if (!$('translateNext').checked) throw new Error(text('下一页尚未翻译。点击“翻译成中文”，或勾选“连续朗读时翻译后续页”。', 'The next page needs translation. Click Translate or enable translation of following pages.'));
       const preparationError = await translationPreparation; if (preparationError) throw preparationError;
-      const result = await translateCurrentUnits({ automatic: true });
+      const autoAbort = new AbortController(); translationAbort = autoAbort;
+      let result;
+      try { result = await translateCurrentUnits({ automatic: true }); }
+      finally { if (translationAbort === autoAbort) cancelTranslation(); }
+      if (playbackToken !== speech.token || current?.id !== readingDocument) return null;
       if (result.failed.length) throw new Error(text(`第 ${nextPage} 页翻译失败，请重试。`, `Page ${nextPage} translation failed; retry it.`));
     }
     return currentSpeechQueue({ translated });
@@ -239,6 +348,8 @@ function playCurrentReading() {
 }
 function loadVoices() { const sourceText = currentUnits.map(u => u.text).join('\n'); if (!sourceText.trim()) { $('voice').innerHTML = `<option>${text('图片页无可用音色','No voice needed for an image-only page')}</option>`; return; } const lang = currentReadingLanguage(); const voices = speech.voices(lang); $('voice').innerHTML = voices.length ? voices.map(v => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} (${escapeHtml(v.lang)})${v.provider === 'minimax' ? ' · MiniMax' : v.localService ? ' · Local' : ''}</option>`).join('') : `<option>${text('未检测到匹配的本机音色','No matching local voice')}</option>`; const selected = speech.voice(lang); if (selected) $('voice').value = selected.voiceURI; }
 function updateSpeechState({ state, error, detail }) {
+  $('pause').textContent = state === 'paused' ? text('继续', 'Resume') : 'Ⅱ';
+  $('pause').setAttribute('aria-label', state === 'paused' ? text('继续朗读', 'Resume reading') : text('暂停朗读', 'Pause reading'));
   let preparing = detail?.provider === 'minimax'
     ? text('正在生成 MiniMax 语音…', 'Generating MiniMax speech…')
     : text('正在准备本地语音，首次使用会下载音色模型…','Preparing local voice; first use downloads the voice model…');
@@ -268,7 +379,9 @@ async function init() {
   speechProvider.setMinimaxEndpoint(minimaxReady ? savedEndpoint : '', savedSecret, savedModel);
   speech = new SpeechController(speechProvider, { preferences: prefs.voices || {}, rate: prefs.rate || 1, onState: updateSpeechState, onHighlight: item => { document.querySelectorAll('.unit').forEach(el => el.classList.toggle('playing', el.dataset.unit === item?.unitId)); }, onPreference: value => { void repo.put('preferences', { id: 'tts', ...value }); } });
   if ((automaticEndpoint || configuredByLink) && minimaxReady && !String(prefs.voices?.zh || '').startsWith('minimax:')) speech.changeSettings({ language: 'zh', voiceURI: MINIMAX_VOICES[0].voiceURI });
-  translation = new TranslationController(repo, new BrowserTranslationProvider()); batcher = new BatchProcessor(repo, renderPdfPage);
+  translation = new TranslationController(repo, localTranslation); batcher = new BatchProcessor(repo, renderPdfPage);
+  $('translationMode').value = localStorage.getItem('course-reader-translation-mode') || (localTranslation.api ? 'local' : 'online');
+  updateTranslationTools();
   $('minimaxEndpoint').value = savedEndpoint; $('minimaxRelaySecret').value = savedSecret; $('minimaxModel').value = savedModel;
   $('minimaxAdvanced').open = !minimaxReady;
   speechProvider.onVoicesChanged(loadVoices); $('rate').value = speech.rate; $('rateValue').value = `${speech.rate}×`; loadVoices(); await loadLibrary(); applyLanguage();
@@ -279,13 +392,19 @@ async function init() {
 
 $('langZh').onclick = () => { uiLanguage = 'zh'; localStorage.setItem('course-reader-ui', uiLanguage); applyLanguage(); void loadLibrary(); };
 $('langEn').onclick = () => { uiLanguage = 'en'; localStorage.setItem('course-reader-ui', uiLanguage); applyLanguage(); void loadLibrary(); };
-$('pdfTab').onclick = () => setTab('pdf'); $('textTab').onclick = () => setTab('text'); $('backHome').onclick = () => { speech.stop(); setScreen('home'); void loadLibrary(); };
+$('pdfTab').onclick = () => setTab('pdf'); $('textTab').onclick = () => setTab('text'); $('backHome').onclick = () => { speech.stop(); cancelTranslation(); viewRevision++; setScreen('home'); void loadLibrary(); };
 $('importPdf').onclick = async () => { const file = $('pdfFile').files[0]; if (!file) return setStatus('pdfStatus', text('请选择 PDF 文件。','Choose a PDF file.'), true); try { $('importPdf').disabled = true; setStatus('pdfStatus', text('正在解析 PDF…','Parsing PDF…')); const data = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument({ data }).promise; const start = Math.min(pdf.numPages, Math.max(1, Number($('pdfStart').value) || 1)); current = await repo.importPdf({ blob: file, title: $('pdfTitle').value.trim() || file.name, totalPages: pdf.numPages, startPage: start }); pdfDocument = pdf; setStatus('pdfStatus', text('已保存，正在打开第一批…','Saved; opening the first batch…')); await openDocument(current.id); } catch (error) { setStatus('pdfStatus', error.message, true); } finally { $('importPdf').disabled = false; } };
 $('saveText').onclick = async () => { try { const rawText = $('rawText').value; current = await repo.saveText({ title: $('textTitle').value.trim() || text('粘贴文字','Pasted text'), rawText, sourceLanguage: $('textLanguage').value }); await openDocument(current.id); } catch (error) { setStatus('textStatus', error.message, true); } };
-$('prevPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('nextPage').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1); $('pageNumber').onchange = () => current?.type === 'pdf' && ensureAndShowPage(current, $('pageNumber').value);
-$('quickPrev').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) - 1); $('quickNext').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value) + 1);
+function navigatePage(page) { if (current?.type !== 'pdf') return; speech.stop(); return ensureAndShowPage(current, page); }
+$('prevPage').onclick = () => navigatePage(Number($('pageNumber').value) - 1); $('nextPage').onclick = () => navigatePage(Number($('pageNumber').value) + 1); $('pageNumber').onchange = () => navigatePage($('pageNumber').value);
+$('quickPrev').onclick = () => navigatePage(Number($('pageNumber').value) - 1); $('quickNext').onclick = () => navigatePage(Number($('pageNumber').value) + 1);
 $('ocrRetry').onclick = () => current?.type === 'pdf' && ensureAndShowPage(current, Number($('pageNumber').value), { forceOcr: true });
-$('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateCurrent; $('showTranslation').onchange = () => { renderContent(); loadVoices(); };
+$('translateBtn').onclick = translateCurrent; $('retryBtn').onclick = translateCurrent; $('showTranslation').onchange = () => { speech.stop(); renderContent(); loadVoices(); };
+$('translationMode').onchange = () => { speech.stop(); cancelTranslation(); localStorage.setItem('course-reader-translation-mode', $('translationMode').value); updateTranslationTools(); };
+$('onlineConsent').onchange = () => { if (!$('onlineConsent').checked) { speech.stop(); cancelTranslation(); setStatus('translationStatus', text('在线翻译授权已撤回。', 'Online translation consent withdrawn.')); } };
+$('cancelTranslation').onclick = () => { speech.stop(); cancelTranslation(); setStatus('translationStatus', text('翻译已取消；已完成段落已保存。', 'Translation cancelled; completed paragraphs are saved.')); $('retryBtn').classList.remove('hidden'); };
+function chooseReading(translated) { speech.stop(); $('showTranslation').checked = translated; renderContent(); loadVoices(); try { playCurrentReading(); } catch (error) { setStatus('speechStatus', error.message, true); } }
+$('readOriginal').onclick = () => chooseReading(false); $('readChinese').onclick = () => chooseReading(true);
 $('saveMinimax').onclick = () => {
   const endpoint = $('minimaxEndpoint').value.trim(); const secret = $('minimaxRelaySecret').value; const model = $('minimaxModel').value;
   localStorage.setItem('course-reader-minimax-endpoint', endpoint); localStorage.setItem('course-reader-minimax-relay-secret', secret); localStorage.setItem('course-reader-minimax-model', model);
@@ -297,6 +416,8 @@ $('play').onclick = () => { try { playCurrentReading(); } catch (error) { setSta
 $('continuous').onchange = event => localStorage.setItem('course-reader-continuous', event.target.checked ? '1' : '0');
 
 if (globalThis.ResizeObserver) new ResizeObserver(syncPlayerDeckSpace).observe($('playerDeck'));
+for (const id of ['langZh', 'langEn']) $(id).addEventListener('click', updateTranslationTools);
+$('stop').addEventListener('click', cancelTranslation);
 window.addEventListener('resize', syncPlayerDeckSpace);
 
 init().catch(error => { setStatus('pdfStatus', error.message, true); setStatus('textStatus', error.message, true); });

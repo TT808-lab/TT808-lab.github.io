@@ -1,5 +1,8 @@
 {
   "functions": {
+    "api/minimax-translate.mjs": {
+      "maxDuration": 60
+    },
     "api/minimax-tts.mjs": {
       "maxDuration": 30
     }

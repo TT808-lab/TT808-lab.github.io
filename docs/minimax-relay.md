@@ -1,5 +1,15 @@
 # MiniMax 朗读中转
 
+## 手机在线翻译
+
+浏览器原生 Translator 不可用（例如 iPhone）时，可选 MiniMax 在线翻译。网页不会因导入或切换界面语言发起翻译，必须勾选上传同意并点击“翻译成中文”。PDF 只翻译当前页；粘贴文本按段落顺序处理。连续朗读中的后续页翻译需另外勾选，默认关闭。
+
+新增 `/api/minimax-translate` 使用服务端现有 `MINIMAX_API_KEY` 和 `MINIMAX_RELAY_SECRET`，调用 MiniMax-M2.5 文本模型；文本费用与语音额度需分别核对。每次最多 1200 个 Unicode 字符，串行请求，50 秒上游超时，截断或失败响应不会标记为成功。PDF 和页面图片不上传，但用户同意的原文片段会经自己的中转发送给 MiniMax。取消停止后续请求，已经发出的请求可能仍产生费用。
+
+译文按原文哈希、段落、语言、provider 版本写入现有 IndexedDB translations，无 schema 迁移。本机与在线两种完整缓存均可读取；失败仅重试未完成部分。中转不记录正文或密钥到日志。两个公网入口分别维护各自的浏览器本地数据。
+
+本机服务的翻译接口也要求 `MINIMAX_RELAY_SECRET`。API key 只由服务端持有，不填写到网页。
+
 Course Reader 不把 MiniMax API key 放进 GitHub Pages。需要朗读时，浏览器只把当前句子发给自己的中转服务，中转服务请求 MiniMax 并把短暂的音频响应返回给浏览器；PDF、图片和整本书不会上传。
 
 先在电脑上设置环境变量，再启动已有的本地 Course Reader 服务：

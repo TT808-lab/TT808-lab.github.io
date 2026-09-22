@@ -72,7 +72,11 @@ export class Repository {
   put(store, data) { return this.transaction([store], 'readwrite', tx => request(tx.objectStore(store).put(data))); }
   listDocuments() { return this.transaction(['documents'], 'readonly', tx => request(tx.objectStore('documents').getAll())); }
   getDocument(id) { return this.get('documents', id); }
-  updateDocument(document) { return this.put('documents', { ...document, updatedAt: Date.now() }); }
+  async updateDocument(document) {
+    const updated = { ...document, updatedAt: Date.now() };
+    await this.put('documents', updated);
+    return updated;
+  }
   getPages(id) { return this.transaction(['pageCache'], 'readonly', tx => request(tx.objectStore('pageCache').index('documentId').getAll(id)).then(rows => rows.sort((a, b) => a.pageNum - b.pageNum))); }
   getUnits(id) { return this.transaction(['units'], 'readonly', tx => request(tx.objectStore('units').index('documentId').getAll(id)).then(rows => rows.sort((a, b) => a.order - b.order))); }
   getPreference(id) { return this.get('preferences', id); }

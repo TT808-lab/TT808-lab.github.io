@@ -29,7 +29,19 @@
   </section>
   <section id="reader" class="hidden">
     <div class="card"><div class="reader-head"><h2 id="readerTitle"></h2><button id="backHome" class="btn" data-zh="返回书架" data-en="Library">返回书架</button></div><div id="readerMeta" class="hint"></div><div class="pager"><button id="prevPage" class="btn fit">‹</button><input id="pageNumber" type="number" min="1"><span id="pageTotal"></span><button id="nextPage" class="btn fit">›</button></div><div class="progress"><i id="pageProgress"></i></div><div id="pageStatus" class="status"></div><button id="ocrRetry" class="btn hidden" style="margin-top:8px" data-zh="重试 OCR" data-en="Retry OCR">重试 OCR</button></div>
-    <div class="card"><div class="row"><button id="translateBtn" class="btn primary fit" data-zh="翻译成中文" data-en="Translate to Chinese">翻译成中文</button><button id="retryBtn" class="btn fit hidden" data-zh="重试失败部分" data-en="Retry failed parts">重试失败部分</button><label class="fit" style="margin:0"><input id="showTranslation" type="checkbox" style="width:auto"> <span data-zh="显示译文" data-en="Show translation">显示译文</span></label></div><div id="translationStatus" class="status"></div><div id="content"></div></div>
+    <div class="card">
+      <details id="translationTools" open><summary data-zh="翻译设置与授权" data-en="Translation settings and consent">翻译设置与授权</summary>
+        <label for="translationMode" data-zh="翻译方式" data-en="Translation method">翻译方式</label>
+        <select id="translationMode"><option value="local" data-zh="本机翻译 · 不上传正文" data-en="On-device · no text upload">本机翻译 · 不上传正文</option><option value="online" data-zh="MiniMax 在线翻译 · 支持手机" data-en="MiniMax online · mobile supported">MiniMax 在线翻译 · 支持手机</option></select>
+        <div id="translationCapability" class="hint" role="status" style="margin:8px 0"></div>
+        <label id="onlineConsentLabel"><input id="onlineConsent" type="checkbox" style="width:auto"> <span data-zh="允许将本次待翻译文字经中转发送给 MiniMax，可能产生文本模型费用。PDF 和图片不上传。" data-en="Allow this translation's text to be sent via the relay to MiniMax; text-model fees may apply. PDF files and images are not uploaded.">允许将本次待翻译文字经中转发送给 MiniMax，可能产生文本模型费用。PDF 和图片不上传。</span></label>
+        <label><input id="translateNext" type="checkbox" style="width:auto"> <span data-zh="连续朗读时翻译后续页（在线模式会继续计费）" data-en="Translate following pages during continuous reading (online fees continue)">连续朗读时翻译后续页（在线模式会继续计费）</span></label>
+      </details>
+      <div class="row" style="margin-top:12px"><button id="translateBtn" class="btn primary fit" data-zh="翻译成中文" data-en="Translate to Chinese">翻译成中文</button><button id="retryBtn" class="btn fit hidden" data-zh="重试失败部分" data-en="Retry failed parts">重试失败部分</button><button id="cancelTranslation" class="btn fit hidden" data-zh="取消翻译" data-en="Cancel translation">取消翻译</button><label class="fit" style="margin:0"><input id="showTranslation" type="checkbox" style="width:auto"> <span data-zh="显示译文" data-en="Show translation">显示译文</span></label></div>
+      <div id="translationStatus" class="status" role="status" aria-live="polite"></div>
+      <div class="row" style="margin-top:10px"><button id="readOriginal" class="btn fit" data-zh="朗读原文" data-en="Read original">朗读原文</button><button id="readChinese" class="btn fit" data-zh="朗读中文译文" data-en="Read Chinese translation">朗读中文译文</button></div>
+      <div id="content"></div>
+    </div>
     <div class="card"><h2 data-zh="书签" data-en="Bookmarks">书签</h2><div class="row"><input id="bookmarkName" placeholder="例如：关键转折 / Key turn"><button id="addBookmark" class="btn fit" data-zh="标记当前页" data-en="Bookmark page">标记当前页</button></div><div id="bookmarks" style="margin-top:8px"></div></div>
   </section>
 </main>
@@ -38,5 +50,5 @@
 {"imports":{"onnxruntime-web/wasm":"./vendor/onnxruntime-web/dist/ort.wasm.min.mjs"}}
 </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" crossorigin="anonymous"></script>
-<script type="module" src="./app.mjs?v=20260921-6"></script>
+<script type="module" src="./app.mjs?v=20260922-1"></script>
 </body></html>

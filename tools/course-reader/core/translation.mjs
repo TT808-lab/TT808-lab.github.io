@@ -25,7 +25,7 @@ export class BrowserTranslationProvider {
   }
   // Invoke directly from a user click, before unrelated async work loses activation.
   prepare(sourceLanguage, targetLanguage, onProgress = () => {}) {
-    if (!this.api) return Promise.reject(new Error('Local translation is unavailable in this browser.'));
+    if (!this.api) return Promise.reject(Object.assign(new Error('Local translation is unavailable in this browser.'), { code: 'LOCAL_TRANSLATION_UNAVAILABLE' }));
     const key = `${sourceLanguage}:${targetLanguage}`;
     if (!this.instances.has(key)) {
       const promise = this.api.create({ sourceLanguage, targetLanguage, monitor(monitor) {
@@ -47,16 +47,55 @@ export class BrowserTranslationProvider {
   }
 }
 
+export class OnlineTranslationProvider {
+  constructor({ endpoint, secret, consent = false, fetcher = (...args) => globalThis.fetch(...args) }) {
+    this.endpoint = endpoint; this.secret = secret; this.consent = consent; this.fetcher = fetcher;
+    this.version = 'minimax-m2.5-translation-v1';
+  }
+  async prepare() {
+    if (!this.consent) throw new Error('请先确认允许在线翻译。');
+    if (!this.endpoint || !this.secret) throw new Error('请先在书架的 MiniMax 设置中配置中转授权。');
+  }
+  async translate(text, { sourceLanguage, targetLanguage, signal }) {
+    await this.prepare(); signal?.throwIfAborted();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    const timeout = setTimeout(abort, 60000);
+    try {
+      const response = await this.fetcher(this.endpoint, {
+        method: 'POST', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'X-Course-Reader-Relay-Secret': this.secret },
+        body: JSON.stringify({ text, sourceLanguage, targetLanguage, consent: true })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '在线翻译失败，请重试。');
+      if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('翻译结果为空，请重试本段。');
+      return result.text;
+    } catch (error) {
+      if (controller.signal.aborted && !signal?.aborted) throw new Error('翻译超时，请重试本段。');
+      throw error;
+    } finally { clearTimeout(timeout); signal?.removeEventListener('abort', abort); }
+  }
+}
+
 export class TranslationController {
   constructor(repository, provider) { this.repository = repository; this.provider = provider; this.running = new Map(); }
-  async cached(unit, sourceLanguage, targetLanguage) {
+  async cached(unit, sourceLanguage, targetLanguage, version = this.provider.version) {
     const sourceHash = await hashText(unit.text);
-    const id = translationKey(unit.id, sourceHash, sourceLanguage, targetLanguage, this.provider.version);
+    const id = translationKey(unit.id, sourceHash, sourceLanguage, targetLanguage, version);
     return this.repository.get('translations', id);
   }
   async readyText(unit, sourceLanguage, targetLanguage) {
     const record = await this.cached(unit, sourceLanguage, targetLanguage);
-    return record?.status === 'ready' ? record.text : null;
+    if (record?.status === 'ready') return record.text;
+    // A completed cache remains readable even if this device lacks its engine.
+    if (['browser-translator-v1', 'minimax-m2.5-translation-v1'].includes(this.provider.version)) {
+      const other = this.provider.version === 'browser-translator-v1' ? 'minimax-m2.5-translation-v1' : 'browser-translator-v1';
+      const cached = await this.cached(unit, sourceLanguage, targetLanguage, other);
+      if (cached?.status === 'ready') return cached.text;
+    }
+    return null;
   }
   translate(unit, sourceLanguage, targetLanguage, { signal, onState = () => {} } = {}) {
     const key = JSON.stringify([unit.id, unit.text, sourceLanguage, targetLanguage]);
