@@ -19,6 +19,7 @@
 <body>
 <main class="shell">
   <header><div><h1 data-zh="课程阅读器" data-en="Course Reader">课程阅读器</h1><div class="sub" data-zh="PDF 与粘贴文字 · 阅读、翻译、朗读" data-en="PDF and pasted text · read, translate, listen">PDF 与粘贴文字 · 阅读、翻译、朗读</div></div><div class="lang"><button id="langZh" class="active">中文</button><button id="langEn">EN</button></div></header>
+  <div id="readerVersion" class="hint" style="margin-bottom:8px">v20260922-2 · <span data-zh="手机支持 MiniMax 在线翻译" data-en="MiniMax online translation on mobile">手机支持 MiniMax 在线翻译</span></div>
   <section id="home">
     <div class="card"><div class="tabs"><button id="pdfTab" class="active" data-zh="导入 PDF" data-en="Import PDF">导入 PDF</button><button id="textTab" data-zh="粘贴文字" data-en="Paste text">粘贴文字</button></div>
       <div id="pdfForm"><label data-zh="书名" data-en="Title">书名</label><input id="pdfTitle" placeholder="例如：Ways of the World"><label data-zh="PDF 文件" data-en="PDF file">PDF 文件</label><input id="pdfFile" type="file" accept="application/pdf"><label data-zh="起始页（默认 1；将成为 30 页批次起点）" data-en="Starting page (default 1; anchor for 30-page batches)">起始页（默认 1；将成为 30 页批次起点）</label><input id="pdfStart" type="number" min="1" value="1"><button id="importPdf" class="btn primary" style="margin-top:12px" data-zh="导入并开始阅读" data-en="Import and start reading">导入并开始阅读</button><div id="pdfStatus" class="status"></div></div>
@@ -50,5 +51,5 @@
 {"imports":{"onnxruntime-web/wasm":"./vendor/onnxruntime-web/dist/ort.wasm.min.mjs"}}
 </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" crossorigin="anonymous"></script>
-<script type="module" src="./app.mjs?v=20260922-1"></script>
+<script type="module" src="./app.mjs?v=20260922-2"></script>
 </body></html>

@@ -19,6 +19,7 @@ let repo, batcher, translation, speech, pdfDocument, ocr;
 let speechProvider;
 let translationAbort = null, viewRevision = 0;
 const localTranslation = new BrowserTranslationProvider();
+const localTranslationSupported = typeof localTranslation.api?.create === 'function';
 let current = null, currentUnits = [], currentPdfPage = null, currentTranslation = new Map();
 let pdfSourceCache = new Map();
 let pageImageUrl = null;
@@ -63,15 +64,19 @@ function applyMiniMaxSetupLink() {
 function miniMaxEndpointIsReady(endpoint, secret) { return endpoint !== PUBLIC_MINIMAX_ENDPOINT || Boolean(secret); }
 
 function updateTranslationTools() {
+  const mode = $('translationMode');
+  mode.querySelector('option[value="local"]').disabled = !localTranslationSupported;
+  if (!localTranslationSupported && mode.value === 'local') mode.value = 'online';
   const online = $('translationMode').value === 'online';
   $('onlineConsentLabel').classList.toggle('hidden', !online);
   const scope = current?.type === 'pdf' ? text('只翻译当前页。', 'Only the current page is translated.') : text('按原始段落依次翻译当前粘贴文本。', 'The pasted text is translated in paragraph order.');
   $('translationCapability').textContent = online
-    ? text('在线翻译仅在勾选同意并点击翻译后开始。', 'Online translation starts only after consent and a Translate click.') + scope
+    ? (localTranslationSupported ? '' : text('此设备使用 MiniMax 在线翻译，无需浏览器内置翻译功能。', 'This device uses MiniMax online translation; no built-in browser translator is needed.')) + text('勾选下方同意后点击“翻译成中文”。', 'Give consent below, then click Translate.') + scope
     : localTranslation.api ? text('使用浏览器本机翻译，首次可能下载模型。', 'Uses the browser translator; a model download may be needed.') + scope
       : text('此浏览器不支持本机翻译。请选 MiniMax 在线翻译并勾选同意；已有译文仍可阅读。', 'This browser has no on-device translator. Select MiniMax online and give consent; cached translations remain readable.');
 }
 function selectTranslationProvider() {
+  updateTranslationTools();
   if ($('translationMode').value === 'local') { translation.provider = localTranslation; return; }
   const endpoint = localStorage.getItem('course-reader-minimax-endpoint') || defaultMiniMaxEndpoint();
   translation.provider = new OnlineTranslationProvider({
@@ -281,6 +286,12 @@ async function translateCurrent() {
     setStatus('translationStatus', text('已读取本机保存的译文，无需重新翻译。', 'Loaded saved translation; no new request needed.')); return;
   }
   selectTranslationProvider();
+  if ($('translationMode').value === 'online' && !$('onlineConsent').checked) {
+    $('translationTools').open = true;
+    setStatus('translationStatus', text('请先勾选上方“允许将本次待翻译文字发送给 MiniMax”，再点击翻译。', 'Allow sending text to MiniMax above, then click Translate.'), true);
+    $('onlineConsentLabel').scrollIntoView({ block: 'center' });
+    return;
+  }
   const revision = viewRevision; const abort = new AbortController(); translationAbort = abort;
   $('translateBtn').disabled = true; $('retryBtn').disabled = true; $('translationMode').disabled = true; $('cancelTranslation').classList.remove('hidden');
   setStatus('translationStatus', $('translationMode').value === 'online' ? text('正在准备在线翻译…', 'Preparing online translation…') : text('正在准备本机翻译模型…','Preparing the local translation model…'));
@@ -380,7 +391,8 @@ async function init() {
   speech = new SpeechController(speechProvider, { preferences: prefs.voices || {}, rate: prefs.rate || 1, onState: updateSpeechState, onHighlight: item => { document.querySelectorAll('.unit').forEach(el => el.classList.toggle('playing', el.dataset.unit === item?.unitId)); }, onPreference: value => { void repo.put('preferences', { id: 'tts', ...value }); } });
   if ((automaticEndpoint || configuredByLink) && minimaxReady && !String(prefs.voices?.zh || '').startsWith('minimax:')) speech.changeSettings({ language: 'zh', voiceURI: MINIMAX_VOICES[0].voiceURI });
   translation = new TranslationController(repo, localTranslation); batcher = new BatchProcessor(repo, renderPdfPage);
-  $('translationMode').value = localStorage.getItem('course-reader-translation-mode') || (localTranslation.api ? 'local' : 'online');
+  const preferredTranslationMode = localStorage.getItem('course-reader-translation-mode');
+  $('translationMode').value = localTranslationSupported && preferredTranslationMode !== 'online' ? 'local' : 'online';
   updateTranslationTools();
   $('minimaxEndpoint').value = savedEndpoint; $('minimaxRelaySecret').value = savedSecret; $('minimaxModel').value = savedModel;
   $('minimaxAdvanced').open = !minimaxReady;
