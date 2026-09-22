@@ -22,6 +22,7 @@ let pdfSourceCache = new Map();
 let pageImageUrl = null;
 const ocrInFlight = new Map();
 const PUBLIC_MINIMAX_ENDPOINT = 'https://tt808-course-reader-relay.vercel.app/api/minimax-tts';
+const PUBLIC_READER_HOSTS = new Set(['tt808-lab.github.io', 'tt808-course-reader-relay.vercel.app']);
 
 function setStatus(id, message, error = false) { const el = $(id); el.textContent = message || ''; el.classList.toggle('error', error); }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -47,11 +48,11 @@ function setTab(tab) { $('pdfForm').classList.toggle('hidden', tab !== 'pdf'); $
 function syncQuickPager(doc, page) { const visible = doc?.type === 'pdf'; $('quickPager').classList.toggle('hidden', !visible); if (!visible) return; $('quickPage').textContent = `${page} / ${doc.totalPages}`; $('quickPrev').disabled = page <= 1; $('quickNext').disabled = page >= doc.totalPages; }
 function defaultMiniMaxEndpoint() {
   if (location.port === '4179') return `${location.origin}/api/minimax-tts`;
-  return location.hostname === 'tt808-lab.github.io' ? PUBLIC_MINIMAX_ENDPOINT : '';
+  return PUBLIC_READER_HOSTS.has(location.hostname) ? PUBLIC_MINIMAX_ENDPOINT : '';
 }
 function applyMiniMaxSetupLink() {
   const url = new URL(location.href); const secret = url.searchParams.get('minimax_setup');
-  if (!secret || secret.length < 16 || location.hostname !== 'tt808-lab.github.io') return false;
+  if (!secret || secret.length < 16 || !PUBLIC_READER_HOSTS.has(location.hostname)) return false;
   localStorage.setItem('course-reader-minimax-endpoint', PUBLIC_MINIMAX_ENDPOINT);
   localStorage.setItem('course-reader-minimax-relay-secret', secret);
   url.searchParams.delete('minimax_setup'); history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);

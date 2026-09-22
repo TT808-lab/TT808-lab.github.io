@@ -22,8 +22,12 @@ function json(res, status, body) {
 export function createMiniMaxHandler({ fetcher = globalThis.fetch, env = process.env } = {}) {
   return async function handler(req, res) {
     const origin = String(req.headers?.origin || '');
-    const allowedOrigin = env.MINIMAX_ALLOWED_ORIGIN || 'https://tt808-lab.github.io';
-    if (origin !== allowedOrigin) return json(res, 403, { error: 'Origin is not allowed.' });
+    const configuredOrigins = String(env.MINIMAX_ALLOWED_ORIGIN || 'https://tt808-lab.github.io')
+      .split(',').map(value => value.trim()).filter(Boolean);
+    const forwardedHost = Array.isArray(req.headers?.['x-forwarded-host']) ? req.headers['x-forwarded-host'][0] : req.headers?.['x-forwarded-host'];
+    const requestHost = String(forwardedHost || req.headers?.host || '').split(',')[0].trim().split(':')[0].toLowerCase();
+    const sameVercelOrigin = requestHost === 'tt808-course-reader-relay.vercel.app' && origin === `https://${requestHost}`;
+    if (!configuredOrigins.includes(origin) && !sameVercelOrigin) return json(res, 403, { error: 'Origin is not allowed.' });
     setCors(res, origin);
     if (req.method === 'OPTIONS') return res.status(204).end();
     if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed.' });

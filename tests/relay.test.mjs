@@ -23,6 +23,16 @@ test('public MiniMax relay enforces origin and authorization', async () => {
   assert.equal(wrongSecret.statusCode, 401);
 });
 
+test('public MiniMax relay accepts its own Vercel reader origin only on the expected host', async () => {
+  const handler = createMiniMaxHandler({ env, fetcher: async () => { throw Error('must not call'); } });
+  const ownOrigin = 'https://tt808-course-reader-relay.vercel.app';
+  const accepted = response(); await handler({ method: 'POST', headers: { origin: ownOrigin, host: 'tt808-course-reader-relay.vercel.app', 'x-course-reader-relay-secret': env.MINIMAX_RELAY_SECRET }, body: {} }, accepted);
+  assert.equal(accepted.statusCode, 400);
+  assert.equal(accepted.headers['Access-Control-Allow-Origin'], ownOrigin);
+  const spoofed = response(); await handler({ method: 'POST', headers: { origin: ownOrigin, host: 'example.com', 'x-course-reader-relay-secret': env.MINIMAX_RELAY_SECRET }, body: {} }, spoofed);
+  assert.equal(spoofed.statusCode, 403);
+});
+
 test('public MiniMax relay forwards one short chunk and returns audio', async () => {
   let upstream;
   const handler = createMiniMaxHandler({ env, fetcher: async (url, options) => {
