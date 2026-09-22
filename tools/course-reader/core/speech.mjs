@@ -20,6 +20,15 @@ export const MINIMAX_VOICES = [
   { voiceId: 'male-qn-qingse', name: 'MiniMax 青年男声' }
 ].map(voice => ({ ...voice, voiceURI: `minimax:${voice.voiceId}`, lang: 'zh-CN', provider: 'minimax', localService: false }));
 
+const MINIMAX_ENGLISH_VOICES = [
+  { voiceId: 'audiobook_female_1', name: 'MiniMax Audiobook Female (Recommended)' },
+  { voiceId: 'audiobook_male_1', name: 'MiniMax Audiobook Male' },
+  { voiceId: 'female-tianmei', name: 'MiniMax Sweet Female' },
+  { voiceId: 'female-chengshu', name: 'MiniMax Mature Female' },
+  { voiceId: 'male-qn-jingying', name: 'MiniMax Professional Male' },
+  { voiceId: 'male-qn-qingse', name: 'MiniMax Young Male' }
+].map(voice => ({ ...voice, voiceURI: `minimax-en:${voice.voiceId}`, lang: 'en-US', provider: 'minimax', localService: false }));
+
 export function languageOf(text, choice = 'auto') {
   if (choice === 'zh' || choice === 'en') return choice;
   return /\p{Script=Han}/u.test(text) ? 'zh' : 'en';
@@ -158,7 +167,7 @@ export class MiniMaxSpeechProvider {
     this.currentAudio = null; this.abortController = null; this.token = 0;
   }
   setEndpoint(endpoint, relaySecret = this.relaySecret, model = this.model) { this.endpoint = String(endpoint || '').trim(); this.relaySecret = relaySecret; if (model) this.model = model; }
-  voices() { return this.endpoint ? MINIMAX_VOICES : []; }
+  voices() { return this.endpoint ? [...MINIMAX_VOICES, ...MINIMAX_ENGLISH_VOICES] : []; }
   onVoicesChanged() { return () => {}; }
   speak(text, { voice, language, rate, onStart, onProgress }) {
     if (!this.endpoint) return Promise.reject(new Error('MiniMax 中转地址尚未配置。'));

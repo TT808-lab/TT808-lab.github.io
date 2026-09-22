@@ -2,7 +2,7 @@ import { openDatabase } from './core/storage.mjs';
 import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, normalizeReadingText, paragraphs } from './core/model.mjs';
 import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
-import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs?v=20260921-4';
+import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs?v=20260921-5';
 import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
 
 // PDF.js ships a web worker for off-main-thread parsing. Without workerSrc,

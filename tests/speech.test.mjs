@@ -102,6 +102,10 @@ test('MiniMax exposes validated Chinese audiobook, female and male choices', () 
   assert.ok(MINIMAX_VOICES.some(voice => voice.voiceId === 'male-qn-jingying'));
   assert.equal(new Set(MINIMAX_VOICES.map(voice => voice.voiceURI)).size, MINIMAX_VOICES.length);
   assert.ok(MINIMAX_VOICES.every(voice => voice.lang === 'zh-CN' && voice.provider === 'minimax'));
+  const providerVoices = new MiniMaxSpeechProvider({ endpoint: 'http://relay.test' }).voices();
+  const english = providerVoices.filter(voice => voice.lang === 'en-US');
+  assert.equal(english.length, MINIMAX_VOICES.length);
+  assert.ok(english.some(voice => voice.voiceId === 'audiobook_female_1' && voice.voiceURI === 'minimax-en:audiobook_female_1'));
 });
 
 test('MiniMax default browser fetch keeps its required receiver', async () => {
