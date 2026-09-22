@@ -34,7 +34,15 @@ function applyLanguage() {
     if (current.type === 'pdf' && currentPdfPage) { const page = current.position?.page || current.anchor || 1; const batch = batchForPage(current, page); setStatus('pageStatus', text(`第 ${page} 页 · 当前批次 ${batch.start}–${batch.end}`, `Page ${page} · batch ${batch.start}–${batch.end}`)); renderContent(); }
   }
 }
-function setScreen(name) { $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); $('playerDeck').classList.toggle('hidden', name !== 'reader'); }
+function syncPlayerDeckSpace() {
+  const deck = $('playerDeck');
+  const height = deck.classList.contains('hidden') ? 0 : Math.ceil(deck.getBoundingClientRect().height);
+  document.documentElement.style.setProperty('--player-deck-height', `${height}px`);
+}
+function setScreen(name) {
+  $('home').classList.toggle('hidden', name !== 'home'); $('reader').classList.toggle('hidden', name !== 'reader'); $('playerDeck').classList.toggle('hidden', name !== 'reader');
+  requestAnimationFrame(syncPlayerDeckSpace);
+}
 function setTab(tab) { $('pdfForm').classList.toggle('hidden', tab !== 'pdf'); $('textForm').classList.toggle('hidden', tab !== 'text'); $('pdfTab').classList.toggle('active', tab === 'pdf'); $('textTab').classList.toggle('active', tab === 'text'); }
 function syncQuickPager(doc, page) { const visible = doc?.type === 'pdf'; $('quickPager').classList.toggle('hidden', !visible); if (!visible) return; $('quickPage').textContent = `${page} / ${doc.totalPages}`; $('quickPrev').disabled = page <= 1; $('quickNext').disabled = page >= doc.totalPages; }
 function defaultMiniMaxEndpoint() {
@@ -284,5 +292,8 @@ $('saveMinimax').onclick = () => {
 $('addBookmark').onclick = async () => { if (!current) return; const pageNum = current.type === 'pdf' ? Number($('pageNumber').value) : Number(current.position?.unit || 0); const bookmarks = [...(current.bookmarks || []).filter(mark => mark.pageNum !== pageNum), { pageNum, name: $('bookmarkName').value.trim() || text(`第 ${pageNum} 页`,`Page ${pageNum}`) }].sort((a,b) => a.pageNum - b.pageNum); current = await repo.updateDocument({ ...current, bookmarks }); renderBookmarks(current); $('bookmarkName').value = ''; };
 $('play').onclick = () => { try { playCurrentReading(); } catch (error) { setStatus('speechStatus', error.message, true); } }; $('pause').onclick = () => speech.state === 'paused' ? speech.resume() : speech.pause(); $('stop').onclick = () => speech.stop(); $('rate').oninput = event => { const value = Number(event.target.value); $('rateValue').value = `${value.toFixed(2)}×`; speech.changeSettings({ rate: value }); }; $('voice').onchange = event => speech.changeSettings({ language: currentReadingLanguage(), voiceURI: event.target.value });
 $('continuous').onchange = event => localStorage.setItem('course-reader-continuous', event.target.checked ? '1' : '0');
+
+if (globalThis.ResizeObserver) new ResizeObserver(syncPlayerDeckSpace).observe($('playerDeck'));
+window.addEventListener('resize', syncPlayerDeckSpace);
 
 init().catch(error => { setStatus('pdfStatus', error.message, true); setStatus('textStatus', error.message, true); });

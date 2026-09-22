@@ -6,8 +6,8 @@
   <title>Course Reader</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
-    :root{--paper:#f4f0e5;--card:#fffdf7;--ink:#24231f;--muted:#6b665e;--line:#d9d0bf;--brand:#244b5b;--accent:#d4972b;--danger:#a33b2f;--playing:#f4d787}
-    *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif} .shell{max-width:760px;margin:auto;padding:16px 14px 110px}
+    :root{--paper:#f4f0e5;--card:#fffdf7;--ink:#24231f;--muted:#6b665e;--line:#d9d0bf;--brand:#244b5b;--accent:#d4972b;--danger:#a33b2f;--playing:#f4d787;--player-deck-height:0px}
+    *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif} .shell{max-width:760px;margin:auto;padding:16px 14px calc(var(--player-deck-height) + 24px)}
     header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:14px}h1{margin:0;font-size:21px} .sub{color:var(--muted);font-size:12px}.lang button{border:1px solid var(--line);background:var(--card);padding:5px 9px}.lang button.active{background:var(--brand);color:#fff}
     .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}.hidden{display:none!important}.tabs{display:flex;gap:8px;margin-bottom:10px}.tabs button,.btn{border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px 12px;font-weight:600;cursor:pointer}.tabs button.active,.primary{background:var(--brand);color:#fff;border-color:var(--brand)}.danger{color:var(--danger);border-color:var(--danger)}label{display:block;color:var(--muted);font-size:12px;margin-top:9px}input,textarea,select{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;padding:9px;font:inherit}textarea{min-height:180px;resize:vertical}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.row .fit{flex:0 0 auto}.hint{color:var(--muted);font-size:12px}.status{color:var(--muted);font-size:12px;margin-top:8px}.error{color:var(--danger)}details{margin-top:10px}details summary{color:var(--brand);cursor:pointer;font-weight:600}
     .library-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}.library-item:last-child{border-bottom:0}.library-item strong{display:block}.library-item small{color:var(--muted)}
@@ -38,5 +38,5 @@
 {"imports":{"onnxruntime-web/wasm":"./vendor/onnxruntime-web/dist/ort.wasm.min.mjs"}}
 </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" crossorigin="anonymous"></script>
-<script type="module" src="./app.mjs?v=20260921-1"></script>
+<script type="module" src="./app.mjs?v=20260921-2"></script>
 </body></html>
