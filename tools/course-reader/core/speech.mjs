@@ -25,10 +25,14 @@ export function languageOf(text, choice = 'auto') {
   return /\p{Script=Han}/u.test(text) ? 'zh' : 'en';
 }
 
-export function speechItems(units, language, translated = false) {
+export function speechItems(units, language, translated = false, { groupSentences = false } = {}) {
   return units.flatMap(unit => {
     const text = translated ? unit.translation : unit.text;
     if (typeof text !== 'string') throw new Error('Translation is not ready for this paragraph.');
+    if (!groupSentences) {
+      return sentences(text, language).flatMap((sentence, sentenceIndex) =>
+        splitChunks(sentence.text, 220).filter(part => part.trim()).map(text => ({ text, language, unitId: unit.id, sentenceIndex })));
+    }
     const items = [];
     let chunk = '', firstSentenceIndex = 0;
     const flush = () => {
@@ -231,8 +235,9 @@ export class HybridSpeechProvider {
   onVoicesChanged(callback) { return this.browser.onVoicesChanged(callback); }
   setMinimaxEndpoint(endpoint, relaySecret = '', model) { this.minimax.setEndpoint(endpoint, relaySecret, model); }
   speak(text, options) {
-    this.stop();
-    this.active = options.voice?.provider === 'piper' ? this.piper : options.voice?.provider === 'minimax' ? this.minimax : this.browser;
+    const next = options.voice?.provider === 'piper' ? this.piper : options.voice?.provider === 'minimax' ? this.minimax : this.browser;
+    if (this.active && this.active !== next) this.active.stop();
+    this.active = next;
     return this.active.speak(text, options);
   }
   pause() { this.active?.pause(); }
@@ -259,7 +264,8 @@ export class SpeechController {
   }
   setState(state, error = null, detail = null) { this.state = state; this.error = error; this.onState({ state, error, detail, index: this.index }); }
   play(queue, { index = 0, next = null } = {}) {
-    this.stop(); this.queue = queue; this.index = index; this.next = next;
+    if (this.state !== 'stopped') this.stop();
+    this.queue = queue; this.index = index; this.next = next;
     this.setState('playing'); void this.advance(this.token);
   }
   async advance(token) {

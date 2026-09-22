@@ -49,12 +49,13 @@ test('missing voice and incomplete translation fail explicitly', async () => {
 });
 test('short sentences share one speech request so punctuation keeps a natural pause', () => {
   const chinese = '第一句说完了。第二句紧接着说！第三句也不要重新联网。';
-  const grouped = speechItems([{ id: 'zh-page', text: chinese }], 'zh');
+  assert.equal(speechItems([{ id: 'native-zh-page', text: chinese }], 'zh').length, 3);
+  const grouped = speechItems([{ id: 'zh-page', text: chinese }], 'zh', false, { groupSentences: true });
   assert.equal(grouped.length, 1);
   assert.equal(grouped[0].text, chinese);
 
   const long = `${'这是一个较长的句子。'.repeat(40)}`;
-  const chunks = speechItems([{ id: 'long-page', text: long }], 'zh');
+  const chunks = speechItems([{ id: 'long-page', text: long }], 'zh', false, { groupSentences: true });
   assert.ok(chunks.length > 1);
   assert.ok(chunks.every(item => Array.from(item.text).length <= 220));
   assert.equal(chunks.map(item => item.text).join(''), long);
@@ -124,4 +125,17 @@ test('hybrid provider routes MiniMax voice without changing browser fallback', (
   const browser = new Provider(); const minimax = new MiniMaxSpeechProvider({ endpoint: 'http://relay.test' });
   const hybrid = new HybridSpeechProvider(browser, { voices: () => [], stop() {}, pause() {}, resume() {} }, minimax);
   assert.equal(hybrid.voices().some(v => v.provider === 'minimax'), true);
+});
+
+test('hybrid provider does not cancel a native voice immediately before speaking', async () => {
+  const browser = new Provider(); let stops = 0; browser.stop = () => { stops++; };
+  const hybrid = new HybridSpeechProvider(browser, { voices: () => [], stop() {}, pause() {}, resume() {} }, new MiniMaxSpeechProvider());
+  const voice = hybrid.voices().find(candidate => candidate.voiceURI === 'en');
+  const first = hybrid.speak('First.', { voice, onStart() {} });
+  assert.equal(stops, 0);
+  browser.calls[0].resolve(); await first;
+  const second = hybrid.speak('Second.', { voice, onStart() {} });
+  assert.equal(stops, 0);
+  browser.calls[1].resolve(); await second;
+  hybrid.stop(); assert.equal(stops, 1);
 });

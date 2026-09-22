@@ -2,7 +2,7 @@ import { openDatabase } from './core/storage.mjs';
 import { BatchProcessor } from './core/batches.mjs';
 import { batchForPage, nextBatch, normalizeReadingText, paragraphs } from './core/model.mjs';
 import { BrowserTranslationProvider, TranslationController } from './core/translation.mjs';
-import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs?v=20260921-3';
+import { HybridSpeechProvider, MINIMAX_VOICES, SpeechController, languageOf, speechItems } from './core/speech.mjs?v=20260921-4';
 import { BrowserOcrProvider, OCR_VERSION } from './core/ocr.mjs';
 
 // PDF.js ships a web worker for off-main-thread parsing. Without workerSrc,
@@ -161,7 +161,7 @@ function renderContent() {
   const emptyMessage = currentPdfPage?.ocrStatus === 'failed' ? text('本页本机文字识别失败，请点击“重试 OCR”。','Local OCR failed for this page. Click “Retry OCR”.') : currentPdfPage?.ocrStatus === 'unavailable' ? text('本机 OCR 不可用，未上传页面内容。请检查浏览器后重试。','Local OCR is unavailable. The page was not uploaded. Check the browser and retry.') : text('这是图片页，正在等待本机文字识别。','This is an image page waiting for local OCR.');
   const body = hasText ? currentUnits.map(unit => { const translated = currentTranslation.get(unit.id); return `<div class="unit" data-unit="${escapeHtml(unit.id)}"><div class="page-text">${escapeHtml(unit.text)}</div>${show && translated ? `<div class="translation">${escapeHtml(translated)}</div>` : ''}</div>`; }).join('') : `<div class="hint">${emptyMessage}</div>`;
   $('content').innerHTML = image + body;
-  document.querySelectorAll('[data-unit]').forEach(el => el.onclick = async () => { const unit = currentUnits.find(u => u.id === el.dataset.unit); if (unit) { current = await repo.updateDocument({ ...current, position: { unit: unit.order } }); const translatedUnit = { ...unit, translation: currentTranslation.get(unit.id) }; const translated = show && currentTranslation.has(unit.id); speech.play(speechItems([translatedUnit], translated ? 'zh' : lang, translated), { next: null }); } });
+  document.querySelectorAll('[data-unit]').forEach(el => el.onclick = async () => { const unit = currentUnits.find(u => u.id === el.dataset.unit); if (unit) { current = await repo.updateDocument({ ...current, position: { unit: unit.order } }); const translatedUnit = { ...unit, translation: currentTranslation.get(unit.id) }; const translated = show && currentTranslation.has(unit.id); const speechLanguage = translated ? 'zh' : lang; const groupSentences = speech.voice(speechLanguage)?.provider === 'minimax'; speech.play(speechItems([translatedUnit], speechLanguage, translated, { groupSentences }), { next: null }); } });
 }
 function renderBookmarks(doc) { $('bookmarks').innerHTML = (doc.bookmarks || []).length ? doc.bookmarks.map((mark, i) => `<div class="bookmark"><span>${escapeHtml(mark.name)} · ${mark.pageNum}</span><button class="btn fit" data-bookmark="${i}">${text('打开','Open')}</button></div>`).join('') : `<div class="hint">${text('还没有书签。','No bookmarks yet.')}</div>`; $('bookmarks').querySelectorAll('[data-bookmark]').forEach(btn => btn.onclick = () => doc.type === 'pdf' ? ensureAndShowPage(doc, doc.bookmarks[Number(btn.dataset.bookmark)].pageNum) : null); }
 async function openDocument(id) { current = await repo.getDocument(id); if (!current) return; if (current.type === 'pdf' && !current.totalPages) current = { ...current, totalPages: current.cachedMax || 1 }; setScreen('reader'); if (current.type === 'pdf') await preparePdfDocument(current); else await prepareTextDocument(current); }
@@ -212,7 +212,9 @@ function currentSpeechQueue({ translated = translatedReadingActive() } = {}) {
   if (translated && !translationsComplete(currentUnits, currentTranslation)) throw new Error(text('本页译文尚未准备完成。','The translation for this page is not ready.'));
   const lang = languageOf(sourceText, current?.sourceLanguage);
   const units = currentUnits.map(unit => ({ ...unit, translation: currentTranslation.get(unit.id) }));
-  return speechItems(units, translated ? 'zh' : lang, translated);
+  const speechLanguage = translated ? 'zh' : lang;
+  const groupSentences = speech.voice(speechLanguage)?.provider === 'minimax';
+  return speechItems(units, speechLanguage, translated, { groupSentences });
 }
 function playCurrentReading() {
   const translated = translatedReadingActive();
