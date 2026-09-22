@@ -29,8 +29,23 @@ export function speechItems(units, language, translated = false) {
   return units.flatMap(unit => {
     const text = translated ? unit.translation : unit.text;
     if (typeof text !== 'string') throw new Error('Translation is not ready for this paragraph.');
-    return sentences(text, language).flatMap((sentence, sentenceIndex) =>
-      splitChunks(sentence.text, 220).filter(t => t.trim()).map(text => ({ text, language, unitId: unit.id, sentenceIndex })));
+    const items = [];
+    let chunk = '', firstSentenceIndex = 0;
+    const flush = () => {
+      if (chunk.trim()) items.push({ text: chunk, language, unitId: unit.id, sentenceIndex: firstSentenceIndex });
+      chunk = '';
+    };
+    for (const [sentenceIndex, sentence] of sentences(text, language).entries()) {
+      for (const part of splitChunks(sentence.text, 220)) {
+        if (!part.trim()) continue;
+        const combined = chunk + part;
+        if (chunk && Array.from(combined).length > 220) flush();
+        if (!chunk) firstSentenceIndex = sentenceIndex;
+        chunk += part;
+      }
+    }
+    flush();
+    return items;
   });
 }
 

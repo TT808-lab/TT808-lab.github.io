@@ -47,6 +47,18 @@ test('missing voice and incomplete translation fail explicitly', async () => {
   const items = speechItems([{ id: 'u', text: 'Hello.\n你好！' }], 'en');
   assert.ok(items.every(i => i.unitId === 'u'));
 });
+test('short sentences share one speech request so punctuation keeps a natural pause', () => {
+  const chinese = '第一句说完了。第二句紧接着说！第三句也不要重新联网。';
+  const grouped = speechItems([{ id: 'zh-page', text: chinese }], 'zh');
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].text, chinese);
+
+  const long = `${'这是一个较长的句子。'.repeat(40)}`;
+  const chunks = speechItems([{ id: 'long-page', text: long }], 'zh');
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every(item => Array.from(item.text).length <= 220));
+  assert.equal(chunks.map(item => item.text).join(''), long);
+});
 test('pause/resume while next page loads does not duplicate the next-page request', async () => {
   const provider = new Provider(); const c = new SpeechController(provider);
   let nextCalls = 0, resolveNext;
